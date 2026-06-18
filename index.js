@@ -17,26 +17,21 @@ app.get('/scan-roblox-image', async (req, res) => {
         const imageUrl = apiResponse.data.data[0].imageUrl;
         const response = await axios({ url: imageUrl, responseType: 'arraybuffer' });
         
+        // Exact high-density matrix dimensions
         const { data, info } = await sharp(response.data)
-            .resize(296, 156, { fit: 'fill' })
+            .resize(592, 312, { fit: 'fill' })
             .raw()
             .toBuffer({ resolveWithObject: true });
 
         let encodedString = "";
-        
-        // Output every pixel value sequentially to preserve true 24-bit color depth
         for (let i = 0; i < data.length; i += info.channels) {
-            const r = data[i];
-            const g = data[i+1];
-            const b = data[i+2];
-            encodedString += `${r}.${g}.${b},`;
+            encodedString += `${data[i]}.${data[i+1]}.${data[i+2]},`;
         }
         
-        // Remove trailing comma
         res.send(encodedString.slice(0, -1));
     } catch (error) {
         res.status(500).send("Error: " + error.message);
     }
 });
 
-app.listen(PORT, () => console.log(`High-Fidelity Pixel Reader online on port ${PORT}`));
+app.listen(PORT, () => console.log(`High-Density Pixel Reader online on port ${PORT}`));
