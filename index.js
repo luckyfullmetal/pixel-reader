@@ -8,9 +8,8 @@ app.get('/scan-roblox-image', async (req, res) => {
     try {
         const assetId = req.query.id;
         
-        // Use the Public Thumbnail endpoint - completely bypasses unauthenticated file download blocks!
+        // Fetch the public thumbnail via ROProxy
         const thumbnailUrl = `https://thumbnails.roproxy.com/v1/assets?assetIds=${assetId}&returnPolicy=PlaceHolder&size=150x150&format=Png&isCircular=false`;
-        
         const apiResponse = await axios.get(thumbnailUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
         
         if (!apiResponse.data || !apiResponse.data.data || apiResponse.data.data.length === 0) {
@@ -18,11 +17,9 @@ app.get('/scan-roblox-image', async (req, res) => {
         }
         
         const imageUrl = apiResponse.data.data[0].imageUrl;
-        
-        // Fetch the raw image buffer securely
         const response = await axios({ url: imageUrl, responseType: 'arraybuffer' });
         
-        // Resize perfectly to your screen dimensions
+        // Resize to match your physical monitor boundaries
         const { data, info } = await sharp(response.data)
             .resize(296, 156, { fit: 'fill' })
             .raw()
@@ -37,10 +34,18 @@ app.get('/scan-roblox-image', async (req, res) => {
             const g = data[i+1];
             const b = data[i+2];
 
-            let type = "K"; 
-            if (r > 150 && g > 150 && b > 150) type = "W"; 
-            else if (r > 120 && g < 90 && b < 90) type = "R";   
-            else if (b > 120 && r < 90 && g < 90) type = "B";   
+            let type = "K"; // Default to Black
+
+            // HIGH-ACCURACY COLOR EXTRACTION TUNING
+            if (r > 140 && g > 140 && b > 140) {
+                type = "W"; // White / Light Grays
+            } else if (g > r && g > b && g > 40) {
+                type = "G"; // Green is dominant channel
+            } else if (r > g && r > b && r > 40) {
+                type = "R"; // Red is dominant channel
+            } else if (b > r && b > g && b > 40) {
+                type = "B"; // Blue is dominant channel
+            }
 
             if (i === 0) {
                 lastType = type;
