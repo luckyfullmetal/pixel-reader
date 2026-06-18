@@ -8,15 +8,21 @@ app.get('/scan-roblox-image', async (req, res) => {
     try {
         const assetId = req.query.id;
         
-        // ROUTE VIA ROProxy: Bypasses direct user-agent blocks on asset delivery networks
-        const proxyUrl = `https://assetdelivery.roproxy.com/v1/asset/?id=${assetId}`;
+        // Use the Public Thumbnail endpoint - completely bypasses unauthenticated file download blocks!
+        const thumbnailUrl = `https://thumbnails.roproxy.com/v1/assets?assetIds=${assetId}&returnPolicy=PlaceHolder&size=150x150&format=Png&isCircular=false`;
         
-        const response = await axios({ 
-            url: proxyUrl, 
-            responseType: 'arraybuffer',
-            headers: { 'User-Agent': 'Mozilla/5.0' } // Simulates standard browser access
-        });
+        const apiResponse = await axios.get(thumbnailUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
         
+        if (!apiResponse.data || !apiResponse.data.data || apiResponse.data.data.length === 0) {
+            throw new Error("No image data found for this Asset ID");
+        }
+        
+        const imageUrl = apiResponse.data.data[0].imageUrl;
+        
+        // Fetch the raw image buffer securely
+        const response = await axios({ url: imageUrl, responseType: 'arraybuffer' });
+        
+        // Resize perfectly to your screen dimensions
         const { data, info } = await sharp(response.data)
             .resize(296, 156, { fit: 'fill' })
             .raw()
@@ -32,9 +38,9 @@ app.get('/scan-roblox-image', async (req, res) => {
             const b = data[i+2];
 
             let type = "K"; 
-            if (r > 160 && g > 160 && b > 160) type = "W"; 
-            else if (r > 110 && g < 90 && b < 90) type = "R";   
-            else if (b > 110 && r < 90 && g < 90) type = "B";   
+            if (r > 150 && g > 150 && b > 150) type = "W"; 
+            else if (r > 120 && g < 90 && b < 90) type = "R";   
+            else if (b > 120 && r < 90 && g < 90) type = "B";   
 
             if (i === 0) {
                 lastType = type;
@@ -57,4 +63,4 @@ app.get('/scan-roblox-image', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Pixel Reader live on port ${PORT}`));
+app.listen(PORT, () => console.log(`Pixel Reader online on port ${PORT}`));
