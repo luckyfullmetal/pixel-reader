@@ -6,59 +6,34 @@ import tempfile
 
 app = Flask(__name__)
 
-# Retrieve your API key from Render's environment variables
-API_KEY = os.environ.get("ROBLOX_API_KEY")
-
-# Store pre-decoded frame grids in memory
+# Memory cache: { "imgur_url_cols_rows": [ [grid_frame_1], ... ] }
 DECODED_VIDEO_CACHE = {}
 
-def load_and_decode_video(video_id, cols, rows):
-    cache_key = f"{video_id}_{cols}x{rows}"
+def load_and_decode_video(video_url, cols, rows):
+    cache_key = f"{video_url}_{cols}x{rows}"
     
-    # If already decoded at this resolution, return it!
+    # If this video is already cached, return it instantly!
     if cache_key in DECODED_VIDEO_CACHE:
         return DECODED_VIDEO_CACHE[cache_key]
 
-    if not API_KEY:
-        raise Exception("ROBLOX_API_KEY environment variable is missing on Render!")
-
-    # 1. Fetch the temporary download redirect URL from Roblox's Open Cloud API
-    auth_url = f"https://apis.roblox.com/asset-delivery-api/v1/assetId/{video_id}"
-    headers = {
-        "x-api-key": API_KEY
-    }
+    print(f"Downloading direct video stream from: {video_url}...")
+    response = requests.get(video_url, stream=True, timeout=30)
     
-    print(f"Authenticating with Open Cloud to fetch Video ID: {video_id}...")
-    auth_response = requests.get(auth_url, headers=headers, timeout=15)
-    
-    if auth_response.status_code != 200:
-        raise Exception(f"Roblox API authentication failed. HTTP {auth_response.status_code}: {auth_response.text}")
-
-    # Parse download URL
-    location_data = auth_response.json()
-    download_url = location_data.get("location")
-    if not download_url:
-        raise Exception("Could not find direct download 'location' in the Roblox API response.")
-
-    # 2. Download the video file cleanly
-    print(f"Downloading secured video stream at {cols}x{rows}...")
-    response = requests.get(download_url, stream=True, timeout=30)
     if response.status_code != 200:
-        raise Exception(f"Failed to stream video binary. HTTP {response.status_code}")
+        raise Exception(f"Failed to download video from Imgur. HTTP {response.status_code}")
 
-    # Use a secure temp path with absolutely NO DIGITS in the filename
-    # This completely bypasses the OpenCV "icvExtractPattern" integer overflow bug!
+    # Use a secure local temp path with no digits in the file name to avoid OpenCV bugs
     temp_dir = tempfile.gettempdir()
     temp_file_path = os.path.join(temp_dir, "temp_render_file.mp4")
 
-    # Write the entire binary file to disk
+    # Save video binary completely to disk
     with open(temp_file_path, 'wb') as f:
         for chunk in response.iter_content(chunk_size=1024 * 1024):
             if chunk:
                 f.write(chunk)
                 f.flush()
 
-    # 3. Read video frames safely
+    # Decode frames using OpenCV
     print("Decoding frames with OpenCV...")
     cap = cv2.VideoCapture(temp_file_path)
     frames_list = []
@@ -83,31 +58,32 @@ def load_and_decode_video(video_id, cols, rows):
         
     cap.release()
     
-    # Clean up the temp file safely
+    # Clean up temp file
     try:
         os.remove(temp_file_path)
     except OSError:
         pass
 
     if len(frames_list) == 0:
-        raise Exception("No readable frames found in video file. The file may be empty or corrupted.")
+        raise Exception("No readable frames found in video file. Ensure your Imgur URL is a direct .mp4 file!")
 
     DECODED_VIDEO_CACHE[cache_key] = frames_list
-    print(f"Successfully cached {len(frames_list)} frames for Video {video_id}!")
+    print(f"Successfully cached {len(frames_list)} frames!")
     return frames_list
 
 @app.route('/get-pixels', methods=['GET'])
 def get_pixels():
-    video_id = request.args.get('id')
+    # We now accept a direct 'url' parameter instead of 'id'
+    video_url = request.args.get('url')
     cols = int(request.args.get('cols', 128))
     rows = int(request.args.get('rows', 72))
     frame_num = int(request.args.get('frame', 1))
 
-    if not video_id:
-        return jsonify({"error": "Missing video 'id'"}), 400
+    if not video_url:
+        return jsonify({"error": "Missing 'url' parameter"}), 400
 
     try:
-        cached_frames = load_and_decode_video(video_id, cols, rows)
+        cached_frames = load_and_decode_video(video_url, cols, rows)
         target_index = (frame_num - 1) % len(cached_frames)
         return jsonify(cached_frames[target_index])
 
