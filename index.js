@@ -5,64 +5,44 @@ const { Jimp } = require('jimp');
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Helper function to resolve a Roblox Asset ID to its direct CDN asset URL
-async function getRobloxImageUrl(assetId) {
-    const deliveryUrl = `https://assetdelivery.roblox.com/v1/asset/?id=${assetId}`;
-    try {
-        const response = await axios.get(deliveryUrl, { maxRedirects: 5 });
-        return response.request.res.responseUrl;
-    } catch (err) {
-        // Fallback directly to the asset endpoint if resolution fails
-        return `https://assetdelivery.roblox.com/v1/asset/?id=${assetId}`;
-    }
-}
-
 app.get('/convert', async (req, res) => {
     const assetId = req.query.id;
-    const width = parseInt(req.query.width) || 48;
-    const height = parseInt(req.query.height) || 48;
+    const size = parseInt(req.query.width) || 48; // Use width for both dimensions (square)
 
-    if (!assetId) {
-        return res.status(400).json({ error: "Missing 'id' parameter" });
-    }
+    if (!assetId) return res.status(400).json({ error: "Missing 'id'" });
 
     try {
-        // 1. Get the actual CDN image URL from Roblox
-        const imgUrl = await getRobloxImageUrl(assetId);
+        // 1. Convert Decal ID / Asset ID into a direct raw PNG/JPEG CDN URL
+        const thumbApi = `https://thumbnails.roproxy.com/v1/assets?assetIds=${assetId}&returnPolicy=PlaceHolder&size=420x420&format=png`;
+        const thumbResponse = await axios.get(thumbApi);
+        const imageUrl = thumbResponse.data.data[0].imageUrl;
 
-        // 2. Load and resize the image using Jimp
-        const image = await Jimp.read(imgUrl);
-        image.resize({ w: width, h: height });
+        if (!imageUrl) throw new Error("Could not fetch Roblox thumbnail");
 
-        const pixelData = [];
+        // 2. Load and resize image
+        const image = await Jimp.read(imageUrl);
+        image.resize({ w: size, h: size });
 
-        // 3. Loop through every pixel
-        for (let y = 0; y < height; y++) {
-            for (let x = 0; x < width; x++) {
-                // Get color at coordinates (0-indexed in Jimp)
+        const pixels = [];
+
+        // 3. Loop through pixels and cull the black/empty ones
+        for (let y = 0; y < size; y++) {
+            for (let x = 0; x < size; x++) {
                 const colorHex = image.getPixelColor(x, y);
                 const { r, g, b } = Jimp.intToRGBA(colorHex);
 
-                // DYNAMIC SKIP: Skip dark/black pixels to optimize network data
-                if (r > 12 || g > 12 || b > 12) {
-                    // Store as [X, Y, R, G, B] (Converting to 1-based index for Roblox Luau)
-                    pixelData.push([x + 1, y + 1, r, g, b]);
+                // Filter out black/dark pixels
+                if (r > 15 || g > 15 || b > 15) {
+                    pixels.push([x + 1, y + 1, r, g, b]); // 1-based index for Roblox
                 }
             }
         }
 
-        // 4. Return coordinates & dimensions
-        res.json({
-            width: width,
-            height: height,
-            pixels: pixelData
-        });
+        res.json({ width: size, height: size, pixels });
 
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`OLED conversion API running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`API Online on port ${PORT}`));
