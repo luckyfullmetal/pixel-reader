@@ -12,7 +12,7 @@ DECODED_VIDEO_CACHE = {}
 def load_and_decode_video(video_url, cols, rows):
     cache_key = f"{video_url}_{cols}x{rows}"
     
-    # If this video is already cached, return it instantly!
+    # Return cached data instantly if already decoded
     if cache_key in DECODED_VIDEO_CACHE:
         return DECODED_VIDEO_CACHE[cache_key]
 
@@ -22,7 +22,7 @@ def load_and_decode_video(video_url, cols, rows):
     if response.status_code != 200:
         raise Exception(f"Failed to download video from Imgur. HTTP {response.status_code}")
 
-    # Use a secure local temp path with no digits in the file name to avoid OpenCV bugs
+    # Use a safe temporary path with no digits to prevent OpenCV integer overflow bugs
     temp_dir = tempfile.gettempdir()
     temp_file_path = os.path.join(temp_dir, "temp_render_file.mp4")
 
@@ -58,7 +58,7 @@ def load_and_decode_video(video_url, cols, rows):
         
     cap.release()
     
-    # Clean up temp file
+    # Clean up the temporary file safely
     try:
         os.remove(temp_file_path)
     except OSError:
@@ -73,7 +73,6 @@ def load_and_decode_video(video_url, cols, rows):
 
 @app.route('/get-pixels', methods=['GET'])
 def get_pixels():
-    # We now accept a direct 'url' parameter instead of 'id'
     video_url = request.args.get('url')
     cols = int(request.args.get('cols', 128))
     rows = int(request.args.get('rows', 72))
