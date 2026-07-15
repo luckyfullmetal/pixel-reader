@@ -6,24 +6,21 @@ import tempfile
 
 app = Flask(__name__)
 
-# Cache dictionary to store temporary downloaded videos so they only download ONCE!
+# Cache downloaded video files in memory so we only download them ONCE!
 VIDEO_CACHE = {}
 
 def get_video_file(video_id):
-    """Downloads the Roblox video directly from Roblox's asset storage."""
+    """Downloads the Roblox video directly to a local temp file."""
     if video_id in VIDEO_CACHE and os.path.exists(VIDEO_CACHE[video_id]):
         return VIDEO_CACHE[video_id]
 
-    # Roblox direct asset download URL
     video_url = f"https://assetdelivery.roblox.com/v1/asset/?id={video_id}"
-    
     print(f"Downloading Roblox Video ID: {video_id}...")
     response = requests.get(video_url, stream=True, timeout=30)
     
     if response.status_code != 200:
-        raise Exception(f"Failed to fetch video. HTTP {response.status_code}")
+        raise Exception(f"Failed to download video. HTTP {response.status_code}")
 
-    # Write binary video data to a local temp file on your Render server
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
     for chunk in response.iter_content(chunk_size=1024 * 1024):
         if chunk:
@@ -44,34 +41,34 @@ def get_pixels():
         return jsonify({"error": "Missing video 'id'"}), 400
 
     try:
-        # Get the path to the downloaded video
         video_path = get_video_file(video_id)
-        
-        # Load video via OpenCV
         cap = cv2.VideoCapture(video_path)
+        
+        # Pull total frame count (might be 0 or -1 on corrupted video metadata)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        if total_frames == 0:
-            return jsonify({"error": "Failed to read video or video is empty"}), 500
-            
-        # Loop the video if Roblox requests a frame number that exceeds the length
-        target_frame = (frame_num - 1) % total_frames
+        # Fallback loop controller: if metadata is corrupt, we let the frames count upward
+        if total_frames <= 0:
+            target_frame = frame_num - 1
+        else:
+            target_frame = (frame_num - 1) % total_frames
         
-        # Pull the specific frame
         cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
         success, frame = cap.read()
         cap.release()
         
+        # If we failed to read (we went past the natural end of the video)
         if not success:
-            return jsonify({"error": f"Failed to extract frame {frame_num}"}), 500
+            # Return an empty array. This tells Roblox to reset its counter back to frame 1!
+            return jsonify([])
 
-        # Convert frame color order (OpenCV defaults to BGR, we need standard RGB)
+        # Convert colors from OpenCV BGR to standard RGB
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
-        # Downscale the frame directly using OpenCV (Lighter and faster than PIL)
+        # Downscale the frame
         resized_frame = cv2.resize(frame_rgb, (cols, rows), interpolation=cv2.INTER_AREA)
         
-        # Extract pixel data into coordinates
+        # Pack into pixel coordinate grid
         pixel_grid = []
         for y in range(rows):
             row_pixels = []
