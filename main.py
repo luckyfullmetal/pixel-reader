@@ -13,13 +13,9 @@ def load_and_decode_video_flat(filename, cols, rows):
 
     video_path = os.path.join(os.getcwd(), filename)
     if not os.path.exists(video_path):
-        raise Exception(f"Video file '{filename}' was not found!")
+        raise Exception("Video file not found")
 
     cap = cv2.VideoCapture(video_path)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if not fps or fps <= 0:
-        fps = 12.0
-
     flat_frames = []
     while True:
         success, frame = cap.read()
@@ -30,13 +26,8 @@ def load_and_decode_video_flat(filename, cols, rows):
         flat_frames.append(resized_frame.flatten().tolist())
         
     cap.release()
-
-    if len(flat_frames) == 0:
-        raise Exception("No frames decoded from local video file.")
-
-    video_data = {"fps": fps, "frames": flat_frames}
-    DECODED_VIDEO_CACHE[cache_key] = video_data
-    return video_data
+    DECODED_VIDEO_CACHE[cache_key] = flat_frames
+    return flat_frames
 
 @app.route('/get-all-pixels', methods=['GET'])
 def get_all_pixels():
@@ -45,18 +36,17 @@ def get_all_pixels():
     rows = int(request.args.get('rows', 72))
 
     try:
-        video_data = load_and_decode_video_flat(filename, cols, rows)
+        all_frames = load_and_decode_video_flat(filename, cols, rows)
         
         def generate():
-            yield f'{{"fps": {video_data["fps"]}, "frames": ['
-            for i, frame in enumerate(video_data["frames"]):
+            yield "["
+            for i, frame in enumerate(all_frames):
                 if i > 0:
                     yield ","
                 yield json.dumps(frame)
-            yield "]}}"
+            yield "]"
             
         return Response(generate(), mimetype='application/json')
-        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
