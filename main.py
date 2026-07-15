@@ -16,23 +16,32 @@ def get_pixels():
         return jsonify({"error": "Missing 'url' or 'id'"}), 400
 
     try:
-        # Determine target URL (Use raw URL, or pull from Roblox delivery service)
-        target_url = image_url if image_url else f"https://assetdelivery.roblox.com/v1/asset/?id={asset_id}"
+        # If an asset_id is provided, resolve it to a direct PNG image link using Roblox's Thumbnails API
+        if asset_id:
+            thumb_api = f"https://thumbnails.roblox.com/v1/assets?assetIds={asset_id}&size=150x150&format=Png"
+            thumb_res = requests.get(thumb_api, timeout=10).json()
+            
+            if "data" in thumb_res and len(thumb_res["data"]) > 0:
+                target_url = thumb_res["data"][0]["imageUrl"]
+            else:
+                return jsonify({"error": "Failed to resolve Roblox asset thumbnail"}), 400
+        else:
+            target_url = image_url
         
-        # Download and read the image
-        response = requests.get(target_url, timeout=10)
+        # Download the actual PNG image
+        response = requests.get(target_url, timeout=15)
         img = Image.open(io.BytesIO(response.content)).convert('RGBA')
         
-        # Downscale directly to your grid size using high-quality sampling
+        # Downscale to fit your subpixel grid
         img = img.resize((cols, rows), Image.Resampling.LANCZOS)
         
-        # Structure pixel data as a simplified grid: list of rows [ [R, G, B], ... ]
+        # Extract RGB values
         pixel_grid = []
         for y in range(rows):
             row_pixels = []
             for x in range(cols):
                 r, g, b, a = img.getpixel((x, y))
-                # If transparent, return black (0, 0, 0)
+                # Treat transparent parts as black
                 if a <= 15:
                     row_pixels.append([0, 0, 0])
                 else:
@@ -43,3 +52,6 @@ def get_pixels():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+if __name__ == '__main__':
+    app.run()
