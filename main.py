@@ -46,18 +46,20 @@ def load_and_decode_video(video_id, cols, rows):
     if response.status_code != 200:
         raise Exception(f"Failed to stream video binary. HTTP {response.status_code}")
 
-    # Use a secure path instead of relying on OS memory handling
+    # Use a secure temp path with absolutely NO DIGITS in the filename
+    # This completely bypasses the OpenCV "icvExtractPattern" integer overflow bug!
     temp_dir = tempfile.gettempdir()
-    temp_file_path = os.path.join(temp_dir, f"video_{video_id}.mp4")
+    temp_file_path = os.path.join(temp_dir, "temp_render_file.mp4")
 
-    # Write the entire binary file to disk before trying to read it
+    # Write the entire binary file to disk
     with open(temp_file_path, 'wb') as f:
         for chunk in response.iter_content(chunk_size=1024 * 1024):
             if chunk:
                 f.write(chunk)
-                f.flush() # Forces writing of the moov atom to disk completely
+                f.flush()
 
     # 3. Read video frames safely
+    print("Decoding frames with OpenCV...")
     cap = cv2.VideoCapture(temp_file_path)
     frames_list = []
     
@@ -81,14 +83,14 @@ def load_and_decode_video(video_id, cols, rows):
         
     cap.release()
     
-    # Clean up the temp file
+    # Clean up the temp file safely
     try:
         os.remove(temp_file_path)
     except OSError:
         pass
 
     if len(frames_list) == 0:
-        raise Exception("No readable frames found in video file. The download might have been interrupted.")
+        raise Exception("No readable frames found in video file. The file may be empty or corrupted.")
 
     DECODED_VIDEO_CACHE[cache_key] = frames_list
     print(f"Successfully cached {len(frames_list)} frames for Video {video_id}!")
