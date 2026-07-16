@@ -1,0 +1,11 @@
+[package]
+name = "pixel-reader"
+version = "1.0.0"
+edition = "2021"
+
+[[bin]]
+name = "server"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1.35", features = ["full"] }
