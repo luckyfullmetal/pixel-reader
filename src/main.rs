@@ -1,4 +1,3 @@
-use std::env;
 use std::fs::File;
 use std::io::Read;
 use std::net::SocketAddr;
@@ -8,15 +7,16 @@ use tokio::io::AsyncWriteExt;
 
 const COLS: usize = 181;
 const ROWS: usize = 102;
-const CHUNK_SIZE: usize = 5; // Multi-frame chunking to prevent Roblox network throttling
+const CHUNK_SIZE: usize = 5; 
 const FRAME_SIZE: usize = COLS * ROWS * 3;
 const RESPONSE_SIZE: usize = FRAME_SIZE * CHUNK_SIZE;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let port = env::var("PORT").unwrap_or_else(|_| "5000".to_string());
-    let addr = format!("0.0.0.0:{}", port).parse::<SocketAddr>()?;
+    // FORCE binding to Render's internal port 10000 directly
+    let addr: SocketAddr = "0.0.0.0:10000".parse()?;
     let listener = TcpListener::bind(&addr).await?;
+    println!("Server successfully listening on port 10000");
 
     // Load stripped color frames instantly into RAM
     let mut file = File::open("OLED_TEST.raw").expect("Stripped file missing!");
@@ -53,11 +53,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             for i in 0..CHUNK_SIZE {
                                 let current_frame = (start_frame + i) % total_frames;
                                 let offset = current_frame * FRAME_SIZE;
-                                // Pointer slice copy (literal CPU registers instruction)
                                 payload.extend_from_slice(&buffer_ref[offset..offset + FRAME_SIZE]);
                             }
 
-                            // Write raw bytes directly to socket buffer
                             let _ = socket.write_all(&payload).await;
                         }
                     }
