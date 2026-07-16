@@ -18,7 +18,6 @@ http.createServer((req, res) => {
 
   res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
   
-  // Directly pipe FFmpeg's output stream straight into the HTTP response stream.
-  // This bypasses Node's memory entirely for maximum speed.
+  // Directly stream raw binary frame data to Roblox
   ffmpeg.stdout.pipe(res);
 }).listen(process.env.PORT || 5000);
