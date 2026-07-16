@@ -1,24 +1,24 @@
-import Fastify from 'fastify';
+import http from 'http';
 import { spawn } from 'child_process';
 import path from 'path';
 
-const fastify = Fastify();
-const FRAME_SIZE = 181 * 102 * 3; // 55,386 bytes
+http.createServer((req, res) => {
+  const [,, filename, frameIdx] = req.url.split('/');
+  if (!filename) return res.writeHead(404).end();
 
-fastify.get('/get-frame/:filename/:frame_idx', (req, reply) => {
   const ffmpeg = spawn('ffmpeg', [
-    '-ss', ((parseInt(req.params.frame_idx, 10) || 0) / 30).toFixed(3),
-    '-i', path.join(process.cwd(), req.params.filename),
-    '-vframes', '1', '-vf', 'scale=181:102:flags=neighbor',
-    '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'
+    '-ss', ((parseInt(frameIdx, 10) || 0) / 30).toFixed(3),
+    '-i', path.join(process.cwd(), filename),
+    '-vframes', '1',
+    '-vf', 'scale=181:102:flags=neighbor',
+    '-f', 'rawvideo',
+    '-pix_fmt', 'rgb24',
+    'pipe:1'
   ]);
 
-  const chunks = [];
-  ffmpeg.stdout.on('data', (c) => chunks.push(c));
-  ffmpeg.on('close', () => {
-    reply.header('Content-Type', 'application/octet-stream')
-         .send(Buffer.concat(chunks).subarray(0, FRAME_SIZE));
-  });
-});
-
-fastify.listen({ port: process.env.PORT || 5000, host: '0.0.0.0' });
+  res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+  
+  // Directly pipe FFmpeg's output stream straight into the HTTP response stream.
+  // This bypasses Node's memory entirely for maximum speed.
+  ffmpeg.stdout.pipe(res);
+}).listen(process.env.PORT || 5000);
