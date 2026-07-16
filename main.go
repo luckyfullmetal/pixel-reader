@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -77,60 +76,4 @@ func getOrProcessVideo(name string) ([]byte, error) {
 	return rawBytes, nil
 }
 
-func handleFrameRequest(w http.ResponseWriter, r *http.Request) {
-	// Enable CORS so Roblox can read the header streams safely
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Content-Type", "application/octet-stream")
-
-	query := r.URL.Query()
-	
-	fileName := query.Get("file")
-	if fileName == "" {
-		fileName = "OLED_TEST"
-	}
-	// Sanitize path inputs
-	fileName = filepath.Base(strings.TrimSuffix(fileName, ".mp4"))
-
-	frameStr := query.Get("frame")
-	startFrame, err := strconv.Atoi(frameStr)
-	if err != nil {
-		startFrame = 0
-	}
-
-	videoBytes, err := getOrProcessVideo(fileName)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return nil
-	}
-
-	totalFrames := len(videoBytes) / FrameSize
-	if totalFrames == 0 {
-		http.Error(w, "Video contains no frame data", http.StatusInternalServerError)
-		return nil
-	}
-
-	w.Header().Set("Content-Length", strconv.Itoa(ResponseSize))
-	w.WriteHeader(http.StatusOK)
-
-	// Direct pointer-like slice extraction to feed the network socket instantly
-	payload := make([]byte, 0, ResponseSize)
-	for i := 0; i < ChunkSize; i++ {
-		currentFrame := (startFrame + i) % totalFrames
-		offset := currentFrame * FrameSize
-		payload = append(payload, videoBytes[offset:offset+FrameSize]...)
-	}
-
-	w.Write(payload)
-}
-
-func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "10000"
-	}
-
-	http.HandleFunc("/", handleFrameRequest)
-
-	fmt.Printf("Go dynamic server listening instantly on port %s...\n", port)
-	log.Fatal(http.ListenAndServe(":" + port, nil))
-}
+func handleFrameRequest(
