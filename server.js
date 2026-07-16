@@ -3,20 +3,27 @@ import { spawn } from 'child_process';
 import path from 'path';
 
 http.createServer((req, res) => {
-  // Robust URL splitting
-  const segments = req.url.split('/').filter(Boolean);
-  
-  if (segments.length < 3 || segments[0] !== 'get-frame') {
+  // Parse incoming URL path and query parameters manually to keep it bare-metal
+  const [pathname, queryString] = req.url.split('?');
+
+  if (pathname !== '/get-frame' || !queryString) {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
-    return res.end('Endpoint Not Found');
+    return res.end('Not Found');
   }
 
-  const filename = segments[1];
-  const frameIdx = segments[2];
+  // Extract 'file' and 'frame' parameters
+  const params = new URLSearchParams(queryString);
+  const filename = params.get('file');
+  const frameIdx = parseInt(params.get('frame'), 10) || 0;
 
-  // Spawn FFmpeg to output raw RGB24 data
+  if (!filename) {
+    res.writeHead(400, { 'Content-Type': 'text/plain' });
+    return res.end('Missing file parameter');
+  }
+
+  // Spawn FFmpeg to jump directly to the target timestamp and output raw RGB bytes
   const ffmpeg = spawn('ffmpeg', [
-    '-ss', ((parseInt(frameIdx, 10) || 0) / 30).toFixed(3),
+    '-ss', (frameIdx / 30).toFixed(3),
     '-i', path.join(process.cwd(), filename),
     '-vframes', '1',
     '-vf', 'scale=181:102:flags=neighbor',
@@ -25,17 +32,19 @@ http.createServer((req, res) => {
     'pipe:1'
   ]);
 
-  const chunks = [];
-  ffmpeg.stdout.on('data', (chunk) => chunks.push(chunk));
+  // Set the response headers to stream raw octet binary data back to your Roblox buffer
+  res.writeHead(200, { 
+    'Content-Type': 'application/octet-stream',
+    'Access-Control-Allow-Origin': '*'
+  });
   
-  ffmpeg.on('close', () => {
-    const buffer = Buffer.concat(chunks);
-    res.writeHead(200, { 
-      'Content-Type': 'application/octet-stream',
-      'Access-Control-Allow-Origin': '*'
-    });
-    res.end(buffer);
+  // Direct stream pipe (Node bypasses local RAM copying entirely)
+  ffmpeg.stdout.pipe(res);
+
+  // Safely kill the child process if the request gets terminated early
+  req.on('close', () => {
+    ffmpeg.kill();
   });
 }).listen(process.env.PORT || 5000, () => {
-  console.log("Bare-metal FFmpeg video pipeline server active on Port 5000");
+  console.log("Ultra-fast query-param decoder pipeline running on Port 5000");
 });
