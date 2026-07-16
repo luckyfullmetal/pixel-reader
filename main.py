@@ -1,24 +1,25 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, Response
 import cv2
 import os
 
 app = Flask(__name__)
 
-# This will hold compact byte arrays instead of bloated lists
+# Compact RAM storage for binary frame arrays
 CONVERTED_VIDEOS_BYTES = {}
 
 # Match your exact Roblox grid resolution
 COLS, ROWS = 181, 102
 
 def pre_convert_videos():
-    """Scans directory and cooks MP4s into compact bytes arrays on startup."""
-    print("--- STARTING ULTRA-LOW MEMORY CONVERSION ---")
+    """Scans the directory and cooks all MP4s into binary arrays immediately on startup."""
+    print("--- STARTING BINARY CONVERSION ---")
     current_dir = os.getcwd()
     
+    # Find every MP4 file in your directory
     mp4_files = [f for f in os.listdir(current_dir) if f.lower().endswith('.mp4')]
     
     if not mp4_files:
-        print("[WARNING] No .mp4 files found!")
+        print("[WARNING] No .mp4 files found in the directory!")
         return
 
     for filename in mp4_files:
@@ -37,19 +38,18 @@ def pre_convert_videos():
             
             # Fast scale down to Roblox grid size
             resized = cv2.resize(frame, (COLS, ROWS), interpolation=cv2.INTER_NEAREST)
-            # Flip BGR to RGB
-            rgb_frame = resized[:, :, [2, 1, 0]]
             
-            # Convert directly to a compact C-level byte string (Zero overhead!)
+            # Flip channel order from OpenCV's BGR to RGB, then convert directly to compact bytes
+            rgb_frame = resized[:, :, [2, 1, 0]]
             frames_bytes.append(rgb_frame.tobytes())
 
         cap.release()
         CONVERTED_VIDEOS_BYTES[filename] = frames_bytes
-        print(f"[SUCCESS] Cooked '{filename}' safely into RAM using ultra-low memory!")
+        print(f"[SUCCESS] Cooked '{filename}' ({len(frames_bytes)} frames) into RAM as binary.")
     
-    print("--- READY FOR ROBLOX CONNECTIONS ---")
+    print("--- SERVER READY FOR CONNECTIONS ---")
 
-# Pre-cook immediately when Render boots
+# Execute conversion instantly on boot
 pre_convert_videos()
 
 @app.route('/get-frame', methods=['GET'])
@@ -59,15 +59,14 @@ def get_frame():
 
     video_bytes_list = CONVERTED_VIDEOS_BYTES.get(filename)
     if not video_bytes_list:
-        return jsonify({"pixels": [], "error": "Video not found"}), 404
+        return "Video Not Found", 404
 
+    # Instant list lookup from RAM
     total_frames = len(video_bytes_list)
     raw_frame_bytes = video_bytes_list[frame_idx % total_frames]
 
-    # Only convert the single requested frame into a JSON list right before sending it
-    pixel_digits = list(raw_frame_bytes)
-
-    return jsonify({"pixels": pixel_digits})
+    # Stream the raw bytes directly over the socket without any text wrappers
+    return Response(raw_frame_bytes, mimetype='application/octet-stream')
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
