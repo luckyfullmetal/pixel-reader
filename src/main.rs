@@ -9,14 +9,17 @@ const CHUNK_SIZE: usize = 5;
 const FRAME_SIZE: usize = COLS * ROWS * 3;
 const RESPONSE_SIZE: usize = FRAME_SIZE * CHUNK_SIZE;
 
-// Video is baked straight into the running machine code!
 const VIDEO_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/OLED_TEST.raw"));
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr: SocketAddr = "0.0.0.0:10000".parse()?;
+    // 1. Dynamically read Render's active assigned PORT environment variable
+    let port_str = std::env::var("PORT").unwrap_or_else(|_| "10000".to_string());
+    let addr_str = format!("0.0.0.0:{}", port_str);
+    let addr: SocketAddr = addr_str.parse()?;
+    
     let listener = TcpListener::bind(&addr).await?;
-    println!("Bare-metal server open on port 10000");
+    println!("Bare-metal server open on port {}", port_str);
     
     let total_frames = VIDEO_BYTES.len() / FRAME_SIZE;
     let shared_buffer = Arc::new(VIDEO_BYTES);
