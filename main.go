@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net/http"
@@ -25,7 +26,6 @@ var (
 	cacheMu sync.RWMutex
 )
 
-// Process the MP4 into raw bytes using FFmpeg on the fly
 func getOrProcessVideo(name string) ([]byte, error) {
 	cacheMu.RLock()
 	data, exists := cache[name]
@@ -37,7 +37,6 @@ func getOrProcessVideo(name string) ([]byte, error) {
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
 	
-	// Double check memory cache
 	if data, exists = cache[name]; exists {
 		return data, nil
 	}
@@ -49,7 +48,6 @@ func getOrProcessVideo(name string) ([]byte, error) {
 
 	rawPath := fmt.Sprintf("%s.raw", name)
 	
-	// If it wasn't pre-processed, run a fast nearest-neighbor downscale strip
 	if _, err := os.Stat(rawPath); os.IsNotExist(err) {
 		fmt.Printf("Processing %s to raw format...\n", mp4Path)
 		cmd := exec.Command("ffmpeg",
@@ -65,7 +63,6 @@ func getOrProcessVideo(name string) ([]byte, error) {
 		}
 	}
 
-	// Read stripped raw bytes into high-speed memory cache
 	rawBytes, err := os.ReadFile(rawPath)
 	if err != nil {
 		return nil, err
@@ -77,9 +74,9 @@ func getOrProcessVideo(name string) ([]byte, error) {
 }
 
 func handleFrameRequest(w http.ResponseWriter, r *http.Request) {
-	// Enable CORS so Roblox can read the header streams safely
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Content-Type", "application/octet-stream")
+	// Changed content type to clear text so Roblox does not mangle it
+	w.Header().Set("Content-Type", "text/plain")
 
 	query := r.URL.Query()
 	
@@ -87,7 +84,6 @@ func handleFrameRequest(w http.ResponseWriter, r *http.Request) {
 	if fileName == "" {
 		fileName = "OLED_TEST"
 	}
-	// Sanitize path inputs
 	fileName = filepath.Base(strings.TrimSuffix(fileName, ".mp4"))
 
 	frameStr := query.Get("frame")
@@ -108,10 +104,7 @@ func handleFrameRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Length", strconv.Itoa(ResponseSize))
-	w.WriteHeader(http.StatusOK)
-
-	// Direct pointer-like slice extraction to feed the network socket instantly
+	// Pull the direct frame chunk array out
 	payload := make([]byte, 0, ResponseSize)
 	for i := 0; i < ChunkSize; i++ {
 		currentFrame := (startFrame + i) % totalFrames
@@ -119,7 +112,11 @@ func handleFrameRequest(w http.ResponseWriter, r *http.Request) {
 		payload = append(payload, videoBytes[offset:offset+FrameSize]...)
 	}
 
-	w.Write(payload)
+	// Base64 encode the final chunk so it travels safely over Roblox HTTP
+	encoded := base64.StdEncoding.EncodeToString(payload)
+	w.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(encoded))
 }
 
 func main() {
@@ -129,7 +126,6 @@ func main() {
 	}
 
 	http.HandleFunc("/", handleFrameRequest)
-
 	fmt.Printf("Go dynamic server listening instantly on port %s...\n", port)
 	log.Fatal(http.ListenAndServe(":" + port, nil))
 }
