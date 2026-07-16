@@ -6,107 +6,81 @@ const fastify = Fastify({ logger: false });
 
 const COLS = 181;
 const ROWS = 102;
-const FRAME_SIZE = COLS * ROWS * 3; // 181 * 102 * 3 bytes (RGB)
+const FRAME_SIZE = COLS * ROWS * 3; // 55,386 bytes
 
-// Configuration for Chunking
-const CHUNK_SIZE = 120; // Cache 120 frames (~4 seconds of video) at a time
-const VIDEO_CACHES = {}; // Structure: { [filename]: { chunkIndex: Number, frames: [Buffer] } }
+// This will stream and hold the raw video data as it decodes in the background
+let videoBuffer = Buffer.alloc(0);
+let ffmpegProcess = null;
 
-// Helper function to decode a specific 4-second chunk into memory
-async function loadVideoChunk(filename, chunkIndex) {
+function startBackgroundStream(filename) {
   const videoPath = path.join(process.cwd(), filename);
-  const startFrame = chunkIndex * CHUNK_SIZE;
-  const startTime = startFrame / 30; // 30 FPS target
+  
+  console.log(`[FFmpeg] Initiating continuous background stream for ${filename}...`);
+  
+  // Launch FFmpeg ONCE. It streams the raw uncompressed RGB data to stdout.
+  ffmpegProcess = spawn('ffmpeg', [
+    '-i', videoPath,
+    '-vf', `scale=${COLS}:${ROWS}:flags=neighbor`,
+    '-f', 'rawvideo',
+    '-pix_fmt', 'rgb24',
+    'pipe:1'
+  ]);
 
-  return new Promise((resolve) => {
-    // Extract exactly CHUNK_SIZE frames starting from startTime
-    const ffmpeg = spawn('ffmpeg', [
-      '-ss', startTime.toString(),
-      '-i', videoPath,
-      '-vframes', CHUNK_SIZE.toString(),
-      '-vf', `scale=${COLS}:${ROWS}:flags=neighbor`,
-      '-f', 'rawvideo',
-      '-pix_fmt', 'rgb24',
-      'pipe:1'
-    ]);
+  ffmpegProcess.stdout.on('data', (chunk) => {
+    // Append the freshly decoded frame chunks to our buffer
+    videoBuffer = Buffer.concat([videoBuffer, chunk]);
+    
+    // Safety check: To stay under Render's 512MB RAM, we keep the buffer capped
+    // at a maximum of 1000 frames (~55MB). If it goes over, we slice off the oldest frames.
+    const maxBufferSize = FRAME_SIZE * 1000;
+    if (videoBuffer.length > maxBufferSize) {
+      videoBuffer = videoBuffer.subarray(videoBuffer.length - maxBufferSize);
+    }
+  });
 
-    const chunks = [];
-    ffmpeg.stdout.on('data', (chunk) => {
-      chunks.push(chunk);
-    });
-
-    ffmpeg.on('close', (code) => {
-      if (code === 0 && chunks.length > 0) {
-        const rawBuffer = Buffer.concat(chunks);
-        const totalFramesExtracted = Math.floor(rawBuffer.length / FRAME_SIZE);
-        const frames = [];
-
-        for (let i = 0; i < totalFramesExtracted; i++) {
-          const start = i * FRAME_SIZE;
-          const end = start + FRAME_SIZE;
-          frames.push(rawBuffer.subarray(start, end));
-        }
-
-        resolve(frames);
-      } else {
-        resolve([]);
-      }
-    });
+  ffmpegProcess.on('close', () => {
+    console.log("[FFmpeg] Video stream finished. Restarting loop...");
+    // Auto-restart stream when the video reaches the end
+    startBackgroundStream(filename);
   });
 }
 
-// Ultra-fast HTTP route
 fastify.get('/get-frame/:filename/:frame_idx', async (request, reply) => {
   const { filename, frame_idx } = request.params;
   const idx = parseInt(frame_idx, 10) || 0;
 
-  // Calculate which chunk this frame belongs to
-  const targetChunkIndex = Math.floor(idx / CHUNK_SIZE);
-  const localFrameIndex = idx % CHUNK_SIZE;
-
-  // Initialize cache for this video if it doesn't exist
-  if (!VIDEO_CACHES[filename]) {
-    VIDEO_CACHES[filename] = { chunkIndex: -1, frames: [] };
+  // Start the background process on the very first request
+  if (!ffmpegProcess) {
+    startBackgroundStream(filename);
+    // Give FFmpeg a brief 200ms head-start to decode the first few frames
+    await new Promise((resolve) => setTimeout(resolve, 200));
   }
 
-  const cache = VIDEO_CACHES[filename];
+  const offset = idx * FRAME_SIZE;
 
-  // If the requested frame is not in the currently cached chunk, load it!
-  if (cache.chunkIndex !== targetChunkIndex) {
-    console.log(`[Cache Miss] Loading chunk ${targetChunkIndex} for ${filename}...`);
-    const newFrames = await loadVideoChunk(filename, targetChunkIndex);
-    
-    if (newFrames.length === 0) {
-      return reply.status(404).send('404');
-    }
-
-    cache.chunkIndex = targetChunkIndex;
-    cache.frames = newFrames;
+  // If the requested frame is ready in our buffer, slice and send it instantly!
+  if (videoBuffer.length >= offset + FRAME_SIZE) {
+    const frame = videoBuffer.subarray(offset, offset + FRAME_SIZE);
+    reply.header('Content-Type', 'application/octet-stream');
+    return reply.send(frame);
   }
 
-  // Retrieve the pre-scaled, raw frame from RAM instantly
-  const frameBuffer = cache.frames[localFrameIndex];
-
-  if (!frameBuffer) {
-    // Wrap around to frame 0 if we exceed video length
-    const fallbackFrame = cache.frames[0];
-    if (fallbackFrame) {
-      reply.header('Content-Type', 'application/octet-stream');
-      return reply.send(fallbackFrame);
-    }
-    return reply.status(404).send('404');
+  // Fallback: If Roblox is requesting faster than FFmpeg is decoding, send the latest decoded frame
+  if (videoBuffer.length >= FRAME_SIZE) {
+    const latestOffset = Math.floor(videoBuffer.length / FRAME_SIZE) * FRAME_SIZE - FRAME_SIZE;
+    const frame = videoBuffer.subarray(latestOffset, latestOffset + FRAME_SIZE);
+    reply.header('Content-Type', 'application/octet-stream');
+    return reply.send(frame);
   }
 
-  // Send raw binary to Roblox instantly (< 1ms)
-  reply.header('Content-Type', 'application/octet-stream');
-  return reply.send(frameBuffer);
+  return reply.status(404).send('Not Ready');
 });
 
 const start = async () => {
   try {
     const port = process.env.PORT || 5000;
     await fastify.listen({ port: parseInt(port), host: '0.0.0.0' });
-    console.log("--- CHUNKED-STREAMING RAM SERVER ONLINE (30+ FPS FIXED) ---");
+    console.log("--- LIVE BACKGROUND PIPELINE STREAMER ONLINE ---");
   } catch (err) {
     process.exit(1);
   }
