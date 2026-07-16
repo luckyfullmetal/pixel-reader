@@ -1,0 +1,13 @@
+{
+  "name": "roblox-video-server",
+  "version": "1.0.0",
+  "description": "Ultra-fast 1D video frame server",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "fastify": "^4.26.0"
+  }
+}
