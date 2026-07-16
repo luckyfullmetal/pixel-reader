@@ -4,32 +4,62 @@ import os
 
 app = Flask(__name__)
 
+# This dictionary holds our raw video digit matrices directly in RAM
+RAM_VIDEO_CACHE = {}
+
+def load_video_to_ram(filename, cols, rows):
+    """
+    Reads the MP4 and instantly compiles it into a pure 
+    matrix of digit lists directly inside Python's RAM.
+    """
+    video_path = os.path.join(os.getcwd(), filename)
+    if not os.path.exists(video_path):
+        return None
+
+    cap = cv2.VideoCapture(video_path)
+    compiled_matrix = []
+
+    while True:
+        success, frame = cap.read()
+        if not success:
+            break
+        
+        # Blazing fast C++ hardware scaling matching your Roblox row/col grid
+        resized = cv2.resize(frame, (cols, rows), interpolation=cv2.INTER_NEAREST)
+        
+        # Ultra-fast color-flip and array flattening (BGR -> RGB) into pure digits
+        flat_rgb = resized[:, :, [2, 1, 0]].ravel().tolist()
+        compiled_matrix.append(flat_rgb)
+
+    cap.release()
+    
+    # Save the compiled raw data array into RAM cache
+    RAM_VIDEO_CACHE[filename] = compiled_matrix
+    return compiled_matrix
+
 @app.route('/get-frame', methods=['GET'])
 def get_frame():
-    # Grab parameters directly from the Roblox request URL
     filename = request.args.get('file', '')
     cols = int(request.args.get('cols', 181))
     rows = int(request.args.get('rows', 102))
     frame_idx = int(request.args.get('frame', 0))
 
-    # Point directly to the video path
-    video_path = os.path.join(os.getcwd(), filename)
-    cap = cv2.VideoCapture(video_path)
-    
-    # Fast-seek directly to the target frame index
-    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-    success, frame = cap.read()
-    cap.release()
+    if not filename:
+        return jsonify({"pixels": [], "error": "No filename provided"}), 400
 
-    if not success:
-        return jsonify({"pixels": []}) # Return empty if frame fails
+    # Look up the video data from RAM cache
+    matrix = RAM_VIDEO_CACHE.get(filename)
+    
+    # If it's not in RAM yet, compile it right now on the fly
+    if matrix is None:
+        matrix = load_video_to_ram(filename, cols, rows)
+        if matrix is None:
+            return jsonify({"pixels": [], "error": f"File '{filename}' not found on server"}), 404
 
-    # FASTEST ENCODER METHOD: Native C++ grid matching
-    resized = cv2.resize(frame, (cols, rows), interpolation=cv2.INTER_NEAREST)
-    
-    # Flatten color data bytes instantly at the machine layer (BGR to RGB)
-    pixels = resized[:, :, [2, 1, 0]].ravel().tolist()
-    
+    # Instant array lookup from RAM (Pure math, zero image decoding overhead)
+    total_frames = len(matrix)
+    pixels = matrix[frame_idx % total_frames]
+
     return jsonify({"pixels": pixels})
 
 if __name__ == '__main__':
