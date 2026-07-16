@@ -22,8 +22,8 @@ def get_hybrid_frame(filename, cols, rows, target_idx):
     if not os.path.exists(video_path):
         return None, "File not found"
 
-    # 1. Reset video capture if switching files
-    if state["current_file"] != filename or state["cap"] == nil:
+    # 1. Reset video capture if switching files or uninitialized
+    if state["current_file"] != filename or state["cap"] is None:
         if state["cap"]:
             state["cap"].release()
         cap = cv2.VideoCapture(video_path)
