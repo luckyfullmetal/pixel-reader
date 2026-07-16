@@ -4,51 +4,66 @@ import os
 
 app = Flask(__name__)
 
-# This holds our "cooked" JSON data matrices in RAM
+# Direct RAM storage for cooked pixel data
 CONVERTED_VIDEOS = {}
 
-def convert_mp4_to_json(filename, cols, rows):
-    """Converts the entire MP4 into pure JSON pixel color digit streams in RAM."""
-    video_path = os.path.join(os.getcwd(), filename)
-    if not os.path.exists(video_path):
-        return None
+# Match your exact Roblox grid resolution
+COLS, ROWS = 181, 102
 
-    cap = cv2.VideoCapture(video_path)
-    frames_json = []
+def pre_convert_videos():
+    """Scans the directory and cooks all MP4s into RAM immediately on startup."""
+    print("--- STARTING AUTO-CONVERSION ---")
+    current_dir = os.getcwd()
+    
+    # Find every MP4 file in your repository
+    mp4_files = [f for f in os.listdir(current_dir) if f.lower().endswith('.mp4')]
+    
+    if not mp4_files:
+        print("[WARNING] No .mp4 files found in the directory!")
+        return
 
-    while True:
-        success, frame = cap.read()
-        if not success:
-            break
+    for filename in mp4_files:
+        video_path = os.path.join(current_dir, filename)
+        cap = cv2.VideoCapture(video_path)
         
-        # 1. Scale frame to match your exact Roblox row/col grid
-        resized = cv2.resize(frame, (cols, rows), interpolation=cv2.INTER_NEAREST)
-        
-        # 2. Extract only the raw color bytes, flip BGR to RGB, and flatten
-        flat_rgb_digits = resized[:, :, [2, 1, 0]].ravel().tolist()
-        
-        # 3. Save this frame's raw color digits
-        frames_json.append(flat_rgb_digits)
+        if not cap.isOpened():
+            print(f"[ERROR] Could not open {filename}")
+            continue
 
-    cap.release()
-    CONVERTED_VIDEOS[filename] = frames_json
-    return frames_json
+        frames_json = []
+        while True:
+            success, frame = cap.read()
+            if not success:
+                break
+            
+            # Fast scale down to Roblox grid size
+            resized = cv2.resize(frame, (COLS, ROWS), interpolation=cv2.INTER_NEAREST)
+            # Extract raw color values (BGR -> RGB) and flatten
+            flat_rgb = resized[:, :, [2, 1, 0]].ravel().tolist()
+            frames_json.append(flat_rgb)
+
+        cap.release()
+        CONVERTED_VIDEOS[filename] = frames_json
+        print(f"[SUCCESS] Cooked '{filename}' ({len(frames_json)} frames) into RAM!")
+    
+    print("--- READY FOR ROBLOX CONNECTIONS ---")
+
+# Trigger the conversion instantly when Render runs the file
+pre_convert_videos()
 
 @app.route('/get-frame', methods=['GET'])
 def get_frame():
     filename = request.args.get('file', '')
-    cols = int(request.args.get('cols', 181))
-    rows = int(request.args.get('rows', 102))
     frame_idx = int(request.args.get('frame', 0))
 
-    # If the video isn't converted yet, convert it to JSON right now
     video_matrix = CONVERTED_VIDEOS.get(filename)
-    if video_matrix is None:
-        video_matrix = convert_mp4_to_json(filename, cols, rows)
-        if video_matrix is None:
-            return jsonify({"pixels": []}), 404
+    if not video_matrix:
+        return jsonify({
+            "pixels": [], 
+            "error": f"Video '{filename}' not pre-loaded. Checked files: {list(CONVERTED_VIDEOS.keys())}"
+        }), 404
 
-    # Instantly serve the pure, cooked JSON digits for this frame index
+    # Direct, instant list lookup from RAM
     total_frames = len(video_matrix)
     return jsonify({"pixels": video_matrix[frame_idx % total_frames]})
 
