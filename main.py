@@ -14,7 +14,7 @@ def load_and_decode_video_flat(filename, cols, rows):
 
     video_path = os.path.join(os.getcwd(), filename)
     if not os.path.exists(video_path):
-        raise Exception("Video file not found")
+        raise Exception(f"Video file '{filename}' not found on the server.")
 
     cap = cv2.VideoCapture(video_path)
     flat_frames = []
@@ -40,6 +40,13 @@ def load_and_decode_video_flat(filename, cols, rows):
     DECODED_VIDEO_CACHE[cache_key] = flat_frames
     return flat_frames
 
+# --- FIXED RENDER HEALTH-CHECK 404 ERROR ---
+@app.route('/', methods=['GET', 'HEAD'])
+def home():
+    """Answers Render's root ping system with a success code."""
+    return "Pixel server is online!", 200
+# --------------------------------------------
+
 @app.route('/get-all-pixels', methods=['GET'])
 def get_all_pixels():
     filename = request.args.get('file', 'video.mp4')
@@ -63,4 +70,6 @@ def get_all_pixels():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run()
+    # Bind to 0.0.0.0 and pull port from environment so it works flawlessly on Render
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
