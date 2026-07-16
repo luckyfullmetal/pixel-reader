@@ -1,74 +1,88 @@
 from flask import Flask, request, jsonify
 import cv2
 import os
-import numpy as np
-import gc
 
 app = Flask(__name__)
 
-# Highly compressed raw binary RAM cache
-GLOBAL_FRAME_CACHE = None
-TOTAL_FRAMES = 0
+# Track active video readers to keep streaming fast
+ACTIVE_READERS = {}
 
-def pre_decode_video_lean(filename="OLED_TEST.mp4", cols=181, rows=102):
-    global GLOBAL_FRAME_CACHE, TOTAL_FRAMES
-    
+def get_stream_frame(filename, cols, rows, frame_idx):
     base_dir = os.path.dirname(os.path.abspath(__file__))
     video_path = os.path.join(base_dir, filename)
     if not os.path.exists(video_path):
         video_path = os.path.join(os.getcwd(), filename)
     if not os.path.exists(video_path):
-        print(f"[ERROR] Video file {filename} not found.")
-        return
+        return None, f"File {filename} not found."
 
-    cap = cv2.VideoCapture(video_path)
-    temp_frames = []
+    # Init or reuse the open file handle
+    if filename not in ACTIVE_READERS:
+        cap = cv2.VideoCapture(video_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        ACTIVE_READERS[filename] = {"cap": cap, "last_idx": -1, "total": total_frames}
     
-    print("[SERVER] Starting ultra-low memory pre-decode...")
-    while True:
+    reader = ACTIVE_READERS[filename]
+    cap = reader["cap"]
+    total_frames = reader["total"]
+
+    if total_frames == 0:
+        return None, "Empty video file."
+
+    safe_idx = frame_idx % total_frames
+
+    # SPEED TRICK: If Roblox wants the next frame sequentially, just read it.
+    # Otherwise, perform a heavy seek jump.
+    if safe_idx != reader["last_idx"] + 1:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, safe_idx)
+    
+    success, frame = cap.read()
+    
+    # If the handle got stale or failed, reset and try once more
+    if not success:
+        cap.release()
+        cap = cv2.VideoCapture(video_path)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, safe_idx)
         success, frame = cap.read()
-        if not success:
-            break
-        
-        resized = cv2.resize(frame, (cols, rows), interpolation=cv2.INTER_NEAREST)
-        # Convert directly to uint8 array (1 byte per pixel color value instead of 28-byte Python objects)
-        rgb_flat = resized[:, :, [2, 1, 0]].ravel()
-        temp_frames.append(rgb_flat)
-        
-    cap.release()
-    
-    if len(temp_frames) > 0:
-        TOTAL_FRAMES = len(temp_frames)
-        # Stack all frames into a single continuous block of C-memory (extremely RAM-friendly)
-        GLOBAL_FRAME_CACHE = np.vstack(temp_frames).astype(np.uint8)
-        print(f"[SERVER] Cached {TOTAL_FRAMES} frames successfully using just {GLOBAL_FRAME_CACHE.nbytes / (1024 * 1024):.2f} MB of RAM!")
-    else:
-        print("[ERROR] No frames could be decoded.")
-        
-    # Free temporary loading structures
-    del temp_frames
-    gc.collect()
+        ACTIVE_READERS[filename]["cap"] = cap
 
-# Run the compact loader
-pre_decode_video_lean()
+    if not success:
+        return None, "Failed to read frame."
+
+    # Update sequence tracker
+    reader["last_idx"] = safe_idx
+
+    # Downsample and flatten instantly
+    resized = cv2.resize(frame, (cols, rows), interpolation=cv2.INTER_NEAREST)
+    return resized[:, :, [2, 1, 0]].ravel().tolist(), None
 
 @app.route('/', methods=['GET', 'HEAD'])
 def home():
-    return "RAM-Cached Low-Memory Streaming Server Online!", 200
+    return "Streaming direct from disk!", 200
 
 @app.route('/get-video-meta', methods=['GET'])
 def get_video_meta():
-    return jsonify({"total_frames": TOTAL_FRAMES})
+    filename = request.args.get('file', 'OLED_TEST.mp4')
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    video_path = os.path.join(base_dir, filename)
+    
+    cap = cv2.VideoCapture(video_path)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    
+    return jsonify({"total_frames": total_frames})
 
 @app.route('/get-frame', methods=['GET'])
 def get_frame():
+    filename = request.args.get('file', 'OLED_TEST.mp4')
+    cols = int(request.args.get('cols', 181))
+    rows = int(request.args.get('rows', 102))
     frame_idx = int(request.args.get('frame', 0))
-    if TOTAL_FRAMES == 0 or GLOBAL_FRAME_CACHE is None:
-        return jsonify([]), 404
+
+    frame_data, error = get_stream_frame(filename, cols, rows, frame_idx)
+    if error:
+        return jsonify({"error": error}), 400
         
-    safe_idx = frame_idx % TOTAL_FRAMES
-    # Extract the requested frame's row from the continuous memory block and convert to standard JSON list
-    return jsonify(GLOBAL_FRAME_CACHE[safe_idx].tolist())
+    return jsonify(frame_data)
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
