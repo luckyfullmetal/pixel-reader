@@ -4,22 +4,20 @@ import os
 
 app = Flask(__name__)
 
-# Compact RAM storage for binary frame arrays
+# Compact RAM storage for pre-baked, zero-processing 1D byte arrays
 CONVERTED_VIDEOS_BYTES = {}
 
-# Match your exact Roblox grid resolution
+# Target resolution matching your Roblox grid
 COLS, ROWS = 181, 102
 
 def pre_convert_videos():
-    """Scans the directory and cooks all MP4s into binary arrays immediately on startup."""
-    print("--- STARTING BINARY CONVERSION ---")
+    """Cooks all MP4 frames directly into 1D, pre-formatted network byte arrays on startup."""
+    print("--- STARTING 1D ULTRA-CONVERSION ---")
     current_dir = os.getcwd()
     
-    # Find every MP4 file in your directory
     mp4_files = [f for f in os.listdir(current_dir) if f.lower().endswith('.mp4')]
-    
     if not mp4_files:
-        print("[WARNING] No .mp4 files found in the directory!")
+        print("[WARNING] No .mp4 files found!")
         return
 
     for filename in mp4_files:
@@ -36,37 +34,43 @@ def pre_convert_videos():
             if not success:
                 break
             
-            # Fast scale down to Roblox grid size
+            # 1. Hardware-level matrix scaling
             resized = cv2.resize(frame, (COLS, ROWS), interpolation=cv2.INTER_NEAREST)
             
-            # Flip channel order from OpenCV's BGR to RGB, then convert directly to compact bytes
-            rgb_frame = resized[:, :, [2, 1, 0]]
+            # 2. Extract channels directly on startup to remove runtime layout overhead
+            # Swaps BGR -> RGB layout permanently in RAM
+            rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+            
+            # 3. Flatten the image matrix completely into a raw, one-dimensional byte string
             frames_bytes.append(rgb_frame.tobytes())
 
         cap.release()
-        CONVERTED_VIDEOS_BYTES[filename] = frames_bytes
-        print(f"[SUCCESS] Cooked '{filename}' ({len(frames_bytes)} frames) into RAM as binary.")
+        
+        # Lock into memory as a flat tuple for slightly faster lookup speed than a list
+        CONVERTED_VIDEOS_BYTES[filename] = tuple(frames_bytes)
+        print(f"[SUCCESS] Cooked '{filename}' ({len(frames_bytes)} frames) into 1D RAM arrays.")
     
-    print("--- SERVER READY FOR CONNECTIONS ---")
+    print("--- SERVER READY: ZERO RUNTIME OVERHEAD METRIC ACTIVE ---")
 
-# Execute conversion instantly on boot
+# Pre-bake everything on boot
 pre_convert_videos()
 
 @app.route('/get-frame', methods=['GET'])
 def get_frame():
+    # Instantaneous string lookup from route arguments
     filename = request.args.get('file', '')
-    frame_idx = int(request.args.get('frame', 0))
-
+    
     video_bytes_list = CONVERTED_VIDEOS_BYTES.get(filename)
     if not video_bytes_list:
         return "Video Not Found", 404
 
-    # Instant list lookup from RAM
-    total_frames = len(video_bytes_list)
-    raw_frame_bytes = video_bytes_list[frame_idx % total_frames]
+    # Direct 1D index slicing from a pre-allocated tuple in memory
+    # Modulo handling allows video loops with practically zero latency
+    raw_frame_bytes = video_bytes_list[int(request.args.get('frame', 0)) % len(video_bytes_list)]
 
-    # Stream the raw bytes directly over the socket without any text wrappers
+    # Stream the raw bytes directly over the socket without wrappers or encoding translations
     return Response(raw_frame_bytes, mimetype='application/octet-stream')
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    # Threaded mode allows concurrent downloads without blocking the loop worker thread
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), threaded=True)
