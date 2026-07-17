@@ -1,6 +1,0 @@
-services:
-  - type: web
-    name: roblox-pixel-reader
-    env: go
-    buildCommand: go build -o main main.go
-    startCommand: ./main
