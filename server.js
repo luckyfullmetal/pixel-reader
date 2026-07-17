@@ -5,8 +5,7 @@ import path from 'path';
 
 const WIDTH = 181;
 const HEIGHT = 102;
-const PALETTE_SIZE = 256 * 3; 
-const FRAME_SIZE = WIDTH * HEIGHT; 
+const FRAME_SIZE = WIDTH * HEIGHT * 3;
 const PORT = process.env.PORT || 8080;
 const videoCache = {};
 
@@ -17,16 +16,16 @@ function prepareRawData(videoFile) {
 
     if (fs.existsSync(binFile)) {
         const fullBuffer = fs.readFileSync(binFile);
-        const totalFrames = Math.floor((fullBuffer.length - PALETTE_SIZE) / FRAME_SIZE);
+        const totalFrames = Math.floor(fullBuffer.length / FRAME_SIZE);
         videoCache[videoFile] = { buffer: fullBuffer, totalFrames };
         return;
     }
 
     const ffmpeg = spawn("ffmpeg", [
         "-i", videoFile,
-        "-vf", `scale=${WIDTH}:${HEIGHT}:flags=neighbor,format=pal8`,
+        "-vf", `scale=${WIDTH}:${HEIGHT}:flags=neighbor`,
         "-f", "rawvideo",
-        "-pix_fmt", "pal8",
+        "-pix_fmt", "rgb24",
         "pipe:1"
     ]);
 
@@ -35,7 +34,7 @@ function prepareRawData(videoFile) {
     ffmpeg.on('close', (code) => {
         if (code !== 0) return;
         const fullBuffer = Buffer.concat(buffers);
-        const totalFrames = Math.floor((fullBuffer.length - PALETTE_SIZE) / FRAME_SIZE);
+        const totalFrames = Math.floor(fullBuffer.length / FRAME_SIZE);
         fs.writeFileSync(binFile, fullBuffer);
         videoCache[videoFile] = { buffer: fullBuffer, totalFrames };
     });
@@ -73,12 +72,9 @@ const server = http.createServer((req, res) => {
         return res.end(Buffer.alloc(0));
     }
 
-    const startByte = PALETTE_SIZE + (frameNum * FRAME_SIZE);
-    const frameBuffer = cachedVideo.buffer.subarray(startByte, startByte + FRAME_SIZE);
-    const paletteBuffer = cachedVideo.buffer.subarray(0, PALETTE_SIZE);
-
+    const startByte = frameNum * FRAME_SIZE;
     res.writeHead(200, { "Content-Type": "application/octet-stream" });
-    res.end(Buffer.concat([paletteBuffer, frameBuffer]));
+    res.end(cachedVideo.buffer.subarray(startByte, startByte + FRAME_SIZE));
 });
 
 server.listen(PORT);
