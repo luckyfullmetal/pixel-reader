@@ -1,8 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -10,41 +10,49 @@ import (
 )
 
 const (
-	Width     = 181
-	Height    = 102
-	FrameSize = Width * Height * 3
+	Width  = 181
+	Height = 102
 )
 
-type VideoData struct {
-	Buffer []byte
-}
-
-var videoCache = make(map[string]VideoData)
-
 func main() {
-	// Search the root directory for any .mp4 files to process on startup
+	// Process videos on startup without keeping them in RAM
 	files, err := os.ReadDir(".")
 	if err == nil {
 		for _, file := range files {
 			if filepath.Ext(file.Name()) == ".mp4" {
-				fmt.Printf("Processing video file: %s\n", file.Name())
-				
-				// Execute FFmpeg to scale and extract raw RGB24 binary pixel frames
-				cmd := exec.Command("ffmpeg", "-i", file.Name(), "-vf", fmt.Sprintf("scale=%d:%d:flags=neighbor", Width, Height), "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
-				var out bytes.Buffer
-				cmd.Stdout = &out
-				
-				if err := cmd.Run(); err == nil {
-					videoCache[file.Name()] = VideoData{Buffer: out.Bytes()}
-					fmt.Printf("Successfully cached: %s (%d bytes)\n", file.Name(), out.Len())
-				} else {
-					fmt.Printf("FFmpeg failed to process %s: %v\n", file.Name(), err)
+				baseName := file.Name()[:len(file.Name())-4]
+				binFileName := baseName + ".bin"
+
+				// Skip processing if we already generated the bin file previously
+				if _, err := os.Stat(binFileName); err == nil {
+					fmt.Printf("Found existing raw data file: %s\n", binFileName)
+					continue
 				}
+
+				fmt.Printf("Processing video file to disk: %s -> %s\n", file.Name(), binFileName)
+
+				// Create the output file on disk
+				outFile, err := os.Create(binFileName)
+				if err != nil {
+					fmt.Printf("Failed to create file %s: %v\n", binFileName, err)
+					continue
+				}
+
+				// Run FFmpeg and stream its output directly to the file on disk (0 RAM usage!)
+				cmd := exec.Command("ffmpeg", "-i", file.Name(), "-vf", fmt.Sprintf("scale=%d:%d:flags=neighbor", Width, Height), "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
+				cmd.Stdout = outFile
+
+				if err := cmd.Run(); err == nil {
+					fmt.Printf("Successfully created disk cache: %s\n", binFileName)
+				} else {
+					fmt.Printf("FFmpeg failed for %s: %v\n", file.Name(), err)
+				}
+				outFile.Close()
 			}
 		}
 	}
 
-	// This endpoint serves the entire video payload at once for upfront local caching in Roblox
+	// Stream the file chunk-by-chunk to Roblox when requested
 	http.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
 		vid := r.URL.Query().Get("video")
 		if vid == "" {
@@ -53,16 +61,25 @@ func main() {
 			return
 		}
 
-		cache, exists := videoCache[vid]
-		if !exists {
+		baseName := vid
+		if filepath.Ext(vid) == ".mp4" {
+			baseName = vid[:len(vid)-4]
+		}
+		binFileName := baseName + ".bin"
+
+		file, err := os.Open(binFileName)
+		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
-			w.Write([]byte("Video not found on server"))
+			w.Write([]byte("Video raw data file not found"))
 			return
 		}
+		defer file.Close()
 
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.WriteHeader(http.StatusOK)
-		w.Write(cache.Buffer)
+		
+		// io.Copy streams the file straight to the network response in tiny 32KB chunks
+		io.Copy(w, file)
 	})
 
 	port := os.Getenv("PORT")
