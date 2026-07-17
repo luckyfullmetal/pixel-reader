@@ -23,28 +23,10 @@ func main() {
 
 				outFile, _ := os.Create(binFileName)
 				
+				// Standard fast 3-byte raw RGB stream direct from FFmpeg to disk
 				cmd := exec.Command("ffmpeg", "-y", "-i", f.Name(), "-vf", "scale=181:102:flags=neighbor", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
-				pr, pw := io.Pipe()
-				cmd.Stdout = pw
-				
-				go func() {
-					cmd.Run()
-					pw.Close()
-				}()
-
-				rgb := make([]byte, 3)
-				packed := make([]byte, 4)
-				for {
-					_, err := io.ReadFull(pr, rgb)
-					if err == io.EOF || err == io.ErrUnexpectedEOF {
-						break
-					}
-					packed[0] = rgb[0] // R
-					packed[1] = rgb[1] // G
-					packed[2] = rgb[2] // B
-					packed[3] = 255    // A
-					outFile.Write(packed)
-				}
+				cmd.Stdout = outFile
+				cmd.Run()
 				outFile.Close()
 			}
 		}
