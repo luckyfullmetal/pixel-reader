@@ -9,7 +9,6 @@ Bun.serve({
   async fetch(req) {
     const url = new URL(req.url);
     
-    // Only handle requests on /stream
     if (url.pathname !== "/stream") {
       return new Response("Not Found", { status: 404 });
     }
@@ -22,15 +21,14 @@ Bun.serve({
     }
 
     const frameNum = parseInt(frameStr, 10);
-    const timePosition = (frameNum / 30).toFixed(4); // Assuming 30 FPS video
+    const timePosition = (frameNum / 30).toFixed(4); // 30 FPS video
 
-    // Spawn ffmpeg natively to extract raw 24-bit RGB stream directly
     const ffmpeg = spawn([
       "ffmpeg",
       "-ss", timePosition,
       "-i", videoName,
       "-vframes", "1",
-      "-vf", `scale=${WIDTH}:${HEIGHT}:flags=neighbor`, // Absolute fastest nearest-neighbor scaling
+      "-vf", `scale=${WIDTH}:${HEIGHT}:flags=neighbor`, // Nearest-neighbor scaling
       "-f", "rawvideo",
       "-pix_fmt", "rgb24",
       "pipe:1"
@@ -39,18 +37,15 @@ Bun.serve({
       stderr: "ignore"
     });
 
-    // Read the binary stream array buffer directly out of stdout
     const responseBuffer = await new Response(ffmpeg.stdout).arrayBuffer();
     const uint8Array = new Uint8Array(responseBuffer);
 
-    // Ensure it's a complete frame, otherwise send an empty signal to tell Roblox to loop
     if (uint8Array.length < FRAME_SIZE) {
       return new Response(new Uint8Array(0), {
         headers: { "Content-Type": "application/octet-stream" }
       });
     }
 
-    // Return raw byte stream packets (e.g. 255 becomes binary 11111111)
     return new Response(uint8Array, {
       headers: { "Content-Type": "application/octet-stream" }
     });
