@@ -38,7 +38,7 @@ func main() {
 		}
 	}
 
-	http.HandleFunc("/stream", func(w http.ResponseWriter, r := range r) {
+	http.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		vid, fStr := q.Get("video"), q.Get("frame")
 		if vid == "" || fStr == "" {
