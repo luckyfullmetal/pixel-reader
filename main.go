@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -24,7 +23,6 @@ func main() {
 
 				outFile, _ := os.Create(binFileName)
 				
-				// Temp buffer to hold the raw RGB stream from FFmpeg
 				cmd := exec.Command("ffmpeg", "-y", "-i", f.Name(), "-vf", "scale=181:102:flags=neighbor", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
 				pr, pw := io.Pipe()
 				cmd.Stdout = pw
@@ -34,7 +32,6 @@ func main() {
 					pw.Close()
 				}()
 
-				// Read 3 bytes at a time, pack into 4 bytes (RGBA format)
 				rgb := make([]byte, 3)
 				packed := make([]byte, 4)
 				for {
@@ -42,7 +39,6 @@ func main() {
 					if err == io.EOF || err == io.ErrUnexpectedEOF {
 						break
 					}
-					// Pack R, G, B into an integer stream (Alpha is 255/fully opaque)
 					packed[0] = rgb[0] // R
 					packed[1] = rgb[1] // G
 					packed[2] = rgb[2] // B
