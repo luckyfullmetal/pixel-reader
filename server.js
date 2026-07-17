@@ -6,6 +6,7 @@ import path from 'path';
 const WIDTH = 181;
 const HEIGHT = 102;
 const FRAME_SIZE = WIDTH * HEIGHT * 3;
+const CHUNK_SIZE = 30; // Number of frames per network batch
 const PORT = process.env.PORT || 8080;
 const videoCache = {};
 
@@ -54,8 +55,8 @@ const server = http.createServer((req, res) => {
     }
 
     const videoName = url.searchParams.get("video");
-    const frameStr = url.searchParams.get("frame");
-    if (!videoName || !frameStr) {
+    const chunkStr = url.searchParams.get("chunk");
+    if (!videoName || !chunkStr) {
         res.writeHead(400);
         return res.end();
     }
@@ -66,15 +67,21 @@ const server = http.createServer((req, res) => {
         return res.end(Buffer.alloc(FRAME_SIZE));
     }
 
-    const frameNum = parseInt(frameStr, 10);
-    if (frameNum >= cachedVideo.totalFrames) {
+    const chunkNum = parseInt(chunkStr, 10);
+    const startFrame = chunkNum * CHUNK_SIZE;
+
+    if (startFrame >= cachedVideo.totalFrames) {
         res.writeHead(200, { "Content-Type": "application/octet-stream" });
-        return res.end(Buffer.alloc(0));
+        return res.end(Buffer.alloc(0)); // End of video signal
     }
 
-    const startByte = frameNum * FRAME_SIZE;
+    const startByte = startFrame * FRAME_SIZE;
+    let endFrame = startFrame + CHUNK_SIZE;
+    if (endFrame > cachedVideo.totalFrames) endFrame = cachedVideo.totalFrames;
+    const endByte = endFrame * FRAME_SIZE;
+
     res.writeHead(200, { "Content-Type": "application/octet-stream" });
-    res.end(cachedVideo.buffer.subarray(startByte, startByte + FRAME_SIZE));
+    res.end(cachedVideo.buffer.subarray(startByte, endByte));
 });
 
 server.listen(PORT);
