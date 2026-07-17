@@ -1,8 +1,8 @@
 {
-  "name": "pixel-reader",
+  "name": "roblox-oled-streamer",
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "bun run server.js"
+    "start": "node server.js"
   }
 }
