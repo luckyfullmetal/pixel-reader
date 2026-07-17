@@ -15,44 +15,43 @@ const (
 )
 
 func main() {
-	// Process videos on startup without keeping them in RAM
+	// Look for MP4s in the current application folder
 	files, err := os.ReadDir(".")
 	if err == nil {
 		for _, file := range files {
 			if filepath.Ext(file.Name()) == ".mp4" {
 				baseName := file.Name()[:len(file.Name())-4]
-				binFileName := baseName + ".bin"
+				
+				// We write to /tmp/ to ensure we have absolute write permissions on Render
+				binFileName := filepath.Join(os.TempDir(), baseName+".bin")
 
-				// Skip processing if we already generated the bin file previously
-				if _, err := os.Stat(binFileName); err == nil {
-					fmt.Printf("Found existing raw data file: %s\n", binFileName)
-					continue
-				}
+				fmt.Printf("[CRT SERVER] Processing video file: %s -> Output: %s\n", file.Name(), binFileName)
 
-				fmt.Printf("Processing video file to disk: %s -> %s\n", file.Name(), binFileName)
-
-				// Create the output file on disk
+				// Create the binary file in the temp directory
 				outFile, err := os.Create(binFileName)
 				if err != nil {
-					fmt.Printf("Failed to create file %s: %v\n", binFileName, err)
+					fmt.Printf("[CRT SERVER] Error creating file %s: %v\n", binFileName, err)
 					continue
 				}
 
-				// Run FFmpeg and stream its output directly to the file on disk (0 RAM usage!)
-				cmd := exec.Command("ffmpeg", "-i", file.Name(), "-vf", fmt.Sprintf("scale=%d:%d:flags=neighbor", Width, Height), "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
+				// Run FFmpeg and stream directly to disk to keep RAM usage at 0
+				cmd := exec.Command("ffmpeg", "-y", "-i", file.Name(), "-vf", fmt.Sprintf("scale=%d:%d:flags=neighbor", Width, Height), "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
 				cmd.Stdout = outFile
+				cmd.Stderr = os.Stderr // Pipes FFmpeg internal logs directly into your Render console logs!
 
 				if err := cmd.Run(); err == nil {
-					fmt.Printf("Successfully created disk cache: %s\n", binFileName)
+					fmt.Printf("[CRT SERVER] Successfully created data disk cache: %s\n", binFileName)
 				} else {
-					fmt.Printf("FFmpeg failed for %s: %v\n", file.Name(), err)
+					fmt.Printf("[CRT SERVER] FFmpeg build execution failed for %s: %v\n", file.Name(), err)
 				}
 				outFile.Close()
 			}
 		}
+	} else {
+		fmt.Printf("[CRT SERVER] Failed to read repository directory: %v\n", err)
 	}
 
-	// Stream the file chunk-by-chunk to Roblox when requested
+	// Stream endpoint for Roblox to consume
 	http.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
 		vid := r.URL.Query().Get("video")
 		if vid == "" {
@@ -65,12 +64,15 @@ func main() {
 		if filepath.Ext(vid) == ".mp4" {
 			baseName = vid[:len(vid)-4]
 		}
-		binFileName := baseName + ".bin"
+		
+		binFileName := filepath.Join(os.TempDir(), baseName+".bin")
+		fmt.Printf("[CRT SERVER] Roblox requested download for: %s\n", binFileName)
 
 		file, err := os.Open(binFileName)
 		if err != nil {
+			fmt.Printf("[CRT SERVER] Roblox request failed: File not found: %s\n", binFileName)
 			w.WriteHeader(http.StatusNotFound)
-			w.Write([]byte("Video raw data file not found"))
+			w.Write([]byte("Video data cache file missing"))
 			return
 		}
 		defer file.Close()
@@ -78,7 +80,6 @@ func main() {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.WriteHeader(http.StatusOK)
 		
-		// io.Copy streams the file straight to the network response in tiny 32KB chunks
 		io.Copy(w, file)
 	})
 
@@ -87,8 +88,8 @@ func main() {
 		port = "8080"
 	}
 	
-	fmt.Printf("Server starting on port %s...\n", port)
+	fmt.Printf("[CRT SERVER] Server live on port %s\n", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		fmt.Printf("Server failed to start: %v\n", err)
+		fmt.Printf("[CRT SERVER] Server startup fatal error: %v\n", err)
 	}
 }
