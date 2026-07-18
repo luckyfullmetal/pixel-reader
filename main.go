@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -8,17 +9,14 @@ import (
 )
 
 func main() {
-	// 1. Pre-convert MP4s to standard files on disk to save RAM during runtime
+	// Pre-convert videos on startup
 	files, err := os.ReadDir(".")
 	if err == nil {
 		for _, f := range files {
 			if filepath.Ext(f.Name()) == ".mp4" {
-				baseName := f.Name()[:len(f.Name())-4]
-				binFileName := filepath.Join(os.TempDir(), baseName+".bin")
-
-				// If it doesn't exist yet, convert it once
-				if _, err := os.Stat(binFileName); os.IsNotExist(err) {
-					outFile, _ := os.Create(binFileName)
+				binName := filepath.Join(os.TempDir(), f.Name()[:len(f.Name())-4]+".bin")
+				if _, err := os.Stat(binName); os.IsNotExist(err) {
+					outFile, _ := os.Create(binName)
 					cmd := exec.Command("ffmpeg", "-y", "-i", f.Name(), "-vf", "scale=181:102:flags=neighbor", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
 					cmd.Stdout = outFile
 					cmd.Run()
@@ -28,7 +26,7 @@ func main() {
 		}
 	}
 
-	// 2. High-speed disk streaming with zero memory footprint
+	// Set up the HTTP route handler
 	http.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
 		vid := r.URL.Query().Get("video")
 		if vid == "" { return }
@@ -40,15 +38,30 @@ func main() {
 		}
 		defer file.Close()
 
-		w.Header().Set("Content-Type", "application/octet-stream")
-		
-		// http.ServeContent automatically handles high-speed chunked disk transfers 
-		// with optimal kernel-level buffering, bypassing Go's RAM allocation completely.
+		// Hijack the underlying TCP network socket to bypass standard HTTP overhead wrappers
+		hijacker, ok := w.(http.Hijacker)
+		if !ok { return }
+		conn, bufrw, err := hijacker.Hijack()
+		if err != nil { return }
+		defer conn.Close()
+
+		// BARE-METAL SECRET TRICK: Disable kernel buffering.
+		// Forces the network card to transmit packets instantly without waiting.
+		if tcpConn, ok := conn.(*net.TCPConn); ok {
+			tcpConn.SetNoDelay(true)
+		}
+
+		// Write bare-minimum HTTP headers directly to the raw socket wire
+		bufrw.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n")
+		bufrw.Flush()
+
+		// Stream the data matrix with zero intermediate memory copies
 		fi, _ := file.Stat()
-		http.ServeContent(w, r, vid+".bin", fi.ModTime(), file)
+		os.NewFile(uintptr(file.Fd()), fi.Name())
+		file.WriteTo(bufrw)
+		bufrw.Flush()
 	})
 
-	port := os.Getenv("PORT")
-	if port == "" { port = "8080" }
-	http.ListenAndServe(":"+port, nil)
+	// Start the server directly on Port 10000
+	http.ListenAndServe(":10000", nil)
 }
