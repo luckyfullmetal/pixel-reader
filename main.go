@@ -1,15 +1,13 @@
 package main
-
 import (
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 )
-
 func main() {
-	files, _ := os.ReadDir(".")
-	for _, f := range files {
+	ff, _ := os.ReadDir(".")
+	for _, f := range ff {
 		if filepath.Ext(f.Name()) == ".mp4" {
 			out := filepath.Join(os.TempDir(), f.Name()[:len(f.Name())-4]+".bin")
 			if _, err := os.Stat(out); os.IsNotExist(err) {
@@ -21,7 +19,6 @@ func main() {
 			}
 		}
 	}
-
 	http.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
 		vid := r.URL.Query().Get("video")
 		if vid == "" { return }
@@ -32,8 +29,7 @@ func main() {
 		fi, _ := f.Stat()
 		http.ServeContent(w, r, vid+".bin", fi.ModTime(), f)
 	})
-
-	port := os.Getenv("PORT")
-	if port == "" { port = "10000" }
-	http.ListenAndServe(":"+port, nil)
+	p := os.Getenv("PORT")
+	if p == "" { p = "10000" }
+	http.ListenAndServe(":"+p, nil)
 }
