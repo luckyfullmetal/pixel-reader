@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
