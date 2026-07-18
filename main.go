@@ -1,16 +1,19 @@
 package main
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 )
 
-const (
-	Width  = 181
-	Height = 102
+// Global in-memory cache to store raw binary frames directly in RAM
+var (
+	videoCache = make(map[string][]byte)
+	cacheLock  sync.RWMutex
 )
 
 func main() {
@@ -19,15 +22,17 @@ func main() {
 		for _, f := range files {
 			if filepath.Ext(f.Name()) == ".mp4" {
 				baseName := f.Name()[:len(f.Name())-4]
-				binFileName := filepath.Join(os.TempDir(), baseName+".bin")
 
-				outFile, _ := os.Create(binFileName)
-				
-				// Standard fast 3-byte raw RGB stream direct from FFmpeg to disk
+				// Run FFmpeg and pipe the raw bytes straight into a RAM buffer instead of a file
 				cmd := exec.Command("ffmpeg", "-y", "-i", f.Name(), "-vf", "scale=181:102:flags=neighbor", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
-				cmd.Stdout = outFile
-				cmd.Run()
-				outFile.Close()
+				
+				var ramBuffer bytes.Buffer
+				cmd.Stdout = &ramBuffer
+				
+				if err := cmd.Run(); err == nil {
+					// Save the raw byte array directly into our global RAM map
+					videoCache[baseName] = ramBuffer.Bytes()
+				}
 			}
 		}
 	}
@@ -35,11 +40,20 @@ func main() {
 	http.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
 		vid := r.URL.Query().Get("video")
 		if vid == "" { return }
-		file, err := os.Open(filepath.Join(os.TempDir(), vid+".bin"))
-		if err != nil { return }
-		defer file.Close()
+
+		// Thread-safe memory lookup (blistering fast)
+		cacheLock.RLock()
+		data, exists := videoCache[vid]
+		cacheLock.RUnlock()
+
+		if !exists {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/octet-stream")
-		io.Copy(w, file)
+		// Directly stream the bytes from RAM straight to the network card pipeline
+		w.Write(data)
 	})
 
 	port := os.Getenv("PORT")
