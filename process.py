@@ -1,10 +1,8 @@
 import os
-import struct
-import base64
 import cv2
 
-TARGET_WIDTH = 160
-TARGET_HEIGHT = 90
+TARGET_WIDTH = 181
+TARGET_HEIGHT = 102
 
 def process_video(file_path):
     video_name = os.path.splitext(file_path)[0]
@@ -16,38 +14,36 @@ def process_video(file_path):
 
     frame_count = 0
     raw_frame_index = 0
-    raw_binary_data = bytearray()
+    hex_payloads = []
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
         
-        # Keep 15 FPS
+        # Keep 15 FPS to optimize file weight
         if raw_frame_index % 2 == 0:
             resized = cv2.resize(frame, (TARGET_WIDTH, TARGET_HEIGHT), interpolation=cv2.INTER_NEAREST)
             rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
             
-            raw_binary_data.extend(rgb_frame.flatten().tobytes())
+            # Pack every pixel into 6 hex characters (e.g. "ff0000" for Red)
+            for pixel in rgb_frame.reshape(-1, 3):
+                hex_payloads.append(f"{pixel[0]:02x}{pixel[1]:02x}{pixel[2]:02x}")
+                
             frame_count += 1
             
         raw_frame_index += 1
 
     cap.release()
 
-    # 8-byte direct binary header structure
-    header = struct.pack("<IHH", frame_count, TARGET_WIDTH, TARGET_HEIGHT)
-    full_binary = header + raw_binary_data
+    # Create a small comma-separated header line followed by the giant hex block
+    final_output = f"{frame_count},{TARGET_WIDTH},{TARGET_HEIGHT}\n" + "".join(hex_payloads)
     
-    # Encode to safe Base64 string so HttpService doesn't drop null characters
-    b64_encoded = base64.b64encode(full_binary).decode('utf-8')
-    
-    # Save it as a standard .bin extension file containing the safe text string
-    output_filename = f"{video_name}.bin"
-    with open(output_filename, "w", encoding="utf-8") as f:
-        f.write(b64_encoded)
+    output_filename = f"{video_name}.json"
+    with open(output_filename, "w") as f:
+        f.write(final_output)
         
-    print(f"Generated Base64 binary stream {output_filename} ({frame_count} frames) at {TARGET_WIDTH}x{TARGET_HEIGHT}!")
+    print(f"Generated {output_filename} ({frame_count} frames) - Optimized text string!")
 
 for file in os.listdir('.'):
     if file.endswith('.mp4'):
