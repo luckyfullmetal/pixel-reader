@@ -22,12 +22,12 @@ def process_video(file_path):
         if not ret:
             break
         
-        # Skip every second frame to optimize file size
+        # Skip every second frame to stay safely within limits
         if raw_frame_index % 2 == 0:
             resized = cv2.resize(frame, (TARGET_WIDTH, TARGET_HEIGHT), interpolation=cv2.INTER_NEAREST)
             rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
             
-            # Extend list with individual integer values directly (0-255)
+            # Flatten frame to R,G,B elements
             flat_pixel_data.extend(rgb_frame.flatten().tolist())
             frame_count += 1
             
@@ -35,7 +35,6 @@ def process_video(file_path):
 
     cap.release()
 
-    # Wrap data into a standard key-value dictionary structure
     payload = {
         "frames": frame_count,
         "width": TARGET_WIDTH,
@@ -43,12 +42,11 @@ def process_video(file_path):
         "data": flat_pixel_data
     }
     
-    # Save directly as a standard JSON text file
     output_filename = f"{video_name}.json"
     with open(output_filename, "w") as f:
         json.dump(payload, f)
         
-    print(f"Generated Roblox-compatible {output_filename} ({frame_count} frames)")
+    print(f"Generated {output_filename} ({frame_count} frames)")
 
 for file in os.listdir('.'):
     if file.endswith('.mp4'):
