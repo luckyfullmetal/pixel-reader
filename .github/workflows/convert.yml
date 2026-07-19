@@ -1,4 +1,4 @@
-name: Convert MP4 to Roblox BIN
+name: Convert MP4 to Roblox JSON
 
 on:
   push:
@@ -23,10 +23,10 @@ jobs:
       - name: Run Converter
         run: python process.py
 
-      - name: Commit BIN Files
+      - name: Commit JSON Files
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add *.bin
-          git diff-index --quiet HEAD || git commit -m "Automated video high-speed binary conversion"
+          git add *.json
+          git diff-index --quiet HEAD || git commit -m "Automated video json conversion"
           git push
