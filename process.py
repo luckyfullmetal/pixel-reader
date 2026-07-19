@@ -7,6 +7,22 @@ TARGET_WIDTH = 181
 TARGET_HEIGHT = 102
 TOTAL_PIXELS = TARGET_WIDTH * TARGET_HEIGHT
 
+# Absolute strict byte threshold for the JSON file (~95MB to leave safety margin for headers)
+MAX_FILE_BYTES = 95 * 1024 * 1024 
+
+def save_part(video_name, part_idx, frame_count, payload_bytes):
+    b91_string = base91.encode(payload_bytes)
+    final_output = f"{frame_count},{TARGET_WIDTH},{TARGET_HEIGHT}\n{b91_string}"
+    
+    # Enforces hard cap check
+    if len(final_output.encode('utf-8')) > 100 * 1024 * 1024:
+        print(f"⚠️ Critical Warning: Part {part_idx} drifted over limits! Reducing threshold.")
+        
+    output_filename = f"{video_name}_part{part_idx}.json"
+    with open(output_filename, "w") as f:
+        f.write(final_output)
+    print(f"💾 Saved: {output_filename} ({frame_count} frames)")
+
 def process_video(file_path):
     video_name = os.path.splitext(file_path)[0]
     cap = cv2.VideoCapture(file_path)
@@ -15,9 +31,10 @@ def process_video(file_path):
         print(f"Failed to open {file_path}")
         return
 
-    frame_count = 0
     raw_frame_index = 0
-    compressed_payload = bytearray()
+    part_idx = 1
+    part_frame_count = 0
+    current_part_payload = bytearray()
     
     prev_frame = np.zeros((TOTAL_PIXELS, 3), dtype=np.uint8)
 
@@ -31,35 +48,40 @@ def process_video(file_path):
             rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
             flat_frame = rgb_frame.reshape(-1, 3)
             
-            # Create a true boolean array of what changed
             diff_mask = np.any(flat_frame != prev_frame, axis=1)
-            
-            # Pack the boolean mask array directly into raw bits (8 pixels per byte)
             packed_mask = np.packbits(diff_mask)
-            
-            # Collect the raw RGB color bytes only for pixels that actually changed
             changed_colors = flat_frame[diff_mask].flatten()
             
-            # Write out: 2 bytes for the size of the color payload + the bitmask + the colors
+            # Calculate the frame structural size overhead cost
+            frame_bytes = bytearray()
             color_bytes_length = len(changed_colors)
-            compressed_payload.extend(color_bytes_length.to_bytes(2, byteorder='big'))
-            compressed_payload.extend(packed_mask.tobytes())
-            compressed_payload.extend(changed_colors.tobytes())
-
+            frame_bytes.extend(color_bytes_length.to_bytes(2, byteorder='big'))
+            frame_bytes.extend(packed_mask.tobytes())
+            frame_bytes.extend(changed_colors.tobytes())
+            
+            # Check if adding this frame pushes the raw text translation over our strict limit
+            # Base91 inflates by roughly 14%, so multiply raw size by 1.15 for safety margin
+            estimated_added_text_size = len(frame_bytes) * 1.15
+            if (len(current_part_payload) * 1.15) + estimated_added_text_size >= MAX_FILE_BYTES:
+                # Save out current accumulated block slice file
+                save_part(video_name, part_idx, part_frame_count, current_part_payload)
+                part_idx += 1
+                part_frame_count = 0
+                current_part_payload = bytearray()
+            
+            current_part_payload.extend(frame_bytes)
+            part_frame_count += 1
             prev_frame = flat_frame
-            frame_count += 1
+            
         raw_frame_index += 1
 
     cap.release()
 
-    b91_string = base91.encode(compressed_payload)
-    final_output = f"{frame_count},{TARGET_WIDTH},{TARGET_HEIGHT}\n{b91_string}"
-    
-    output_filename = f"{video_name}.json"
-    with open(output_filename, "w") as f:
-        f.write(final_output)
+    # Save any final remaining trailing frame pieces
+    if part_frame_count > 0:
+        save_part(video_name, part_idx, part_frame_count, current_part_payload)
         
-    print(f"📉 Bare-Metal Squeeze Complete -> {output_filename} is at the absolute floor size!")
+    print(f"🎉 Slicing Finished successfully. Total multi-part sequences generated: {part_idx}")
 
 for file in os.listdir('.'):
     if file.endswith('.mp4'):
