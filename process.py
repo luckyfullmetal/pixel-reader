@@ -6,7 +6,7 @@ import numpy as np
 TARGET_WIDTH = 181
 TARGET_HEIGHT = 102
 TOTAL_PIXELS = TARGET_WIDTH * TARGET_HEIGHT
-MAX_FILE_BYTES = 95 * 1024 * 1024 
+MAX_FILE_BYTES = 75 * 1024 * 1024 
 
 # PHASE 0: Pre-Run Directory Cleanup
 print("🧹 Cleaning directory... Removing old .json files.")
