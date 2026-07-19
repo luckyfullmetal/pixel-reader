@@ -1,8 +1,8 @@
 import os
 import cv2
 
-TARGET_WIDTH = 640
-TARGET_HEIGHT = 360
+TARGET_WIDTH = 384
+TARGET_HEIGHT = 216
 
 def process_video(file_path):
     video_name = os.path.splitext(file_path)[0]
