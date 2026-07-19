@@ -1,9 +1,11 @@
 import os
 import cv2
 import base91
+import numpy as np
 
 TARGET_WIDTH = 181
 TARGET_HEIGHT = 102
+TOTAL_PIXELS = TARGET_WIDTH * TARGET_HEIGHT
 
 def process_video(file_path):
     video_name = os.path.splitext(file_path)[0]
@@ -17,7 +19,7 @@ def process_video(file_path):
     raw_frame_index = 0
     compressed_payload = bytearray()
     
-    prev_frame = [[0, 0, 0]] * (TARGET_WIDTH * TARGET_HEIGHT)
+    prev_frame = np.zeros((TOTAL_PIXELS, 3), dtype=np.uint8)
 
     while True:
         ret, frame = cap.read()
@@ -29,40 +31,20 @@ def process_video(file_path):
             rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
             flat_frame = rgb_frame.reshape(-1, 3)
             
-            changed_pixels = []
-            for idx, pixel in enumerate(flat_frame):
-                prev_pixel = prev_frame[idx]
-                if pixel[0] != prev_pixel[0] or pixel[1] != prev_pixel[1] or pixel[2] != prev_pixel[2]:
-                    changed_pixels.append((idx, pixel))
+            # Create a true boolean array of what changed
+            diff_mask = np.any(flat_frame != prev_frame, axis=1)
             
-            diff_bytes = bytearray()
-            i = 0
-            while i < len(changed_pixels):
-                start_idx, color = changed_pixels[i]
-                run_length = 1
-                
-                # Check what row this run started on
-                start_row = start_idx // TARGET_WIDTH
-                
-                # FIXED: Added boundary constraint to prevent runs from wrapping across screen edges
-                while (i + run_length < len(changed_pixels) and 
-                       changed_pixels[i + run_length][0] == start_idx + run_length and 
-                       (start_idx + run_length) // TARGET_WIDTH == start_row and
-                       run_length < 255):
-                    run_length += 1
-                
-                diff_bytes.extend(start_idx.to_bytes(2, byteorder='big'))
-                diff_bytes.append(run_length)
-                
-                for k in range(run_length):
-                    run_color = changed_pixels[i + k][1]
-                    diff_bytes.extend([run_color[0], run_color[1], run_color[2]])
-                
-                i += run_length
+            # Pack the boolean mask array directly into raw bits (8 pixels per byte)
+            packed_mask = np.packbits(diff_mask)
             
-            frame_size = len(diff_bytes)
-            compressed_payload.extend(frame_size.to_bytes(2, byteorder='big'))
-            compressed_payload.extend(diff_bytes)
+            # Collect the raw RGB color bytes only for pixels that actually changed
+            changed_colors = flat_frame[diff_mask].flatten()
+            
+            # Write out: 2 bytes for the size of the color payload + the bitmask + the colors
+            color_bytes_length = len(changed_colors)
+            compressed_payload.extend(color_bytes_length.to_bytes(2, byteorder='big'))
+            compressed_payload.extend(packed_mask.tobytes())
+            compressed_payload.extend(changed_colors.tobytes())
 
             prev_frame = flat_frame
             frame_count += 1
@@ -77,7 +59,7 @@ def process_video(file_path):
     with open(output_filename, "w") as f:
         f.write(final_output)
         
-    print(f"🎉 Generated {output_filename} ({frame_count} frames) -> Lossless RLE Coordinates!")
+    print(f"📉 Bare-Metal Squeeze Complete -> {output_filename} is at the absolute floor size!")
 
 for file in os.listdir('.'):
     if file.endswith('.mp4'):
