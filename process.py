@@ -6,15 +6,28 @@ import numpy as np
 TARGET_WIDTH = 181
 TARGET_HEIGHT = 102
 TOTAL_PIXELS = TARGET_WIDTH * TARGET_HEIGHT
-
-# Absolute strict byte threshold for the JSON file (~95MB to leave safety margin for headers)
 MAX_FILE_BYTES = 95 * 1024 * 1024 
+
+# PHASE 0: Pre-Run Directory Cleanup
+print("🧹 Cleaning directory... Removing old .json files.")
+deleted_count = 0
+for file in os.listdir('.'):
+    if file.endswith('.json'):
+        try:
+            os.remove(file)
+            deleted_count += 1
+        except Exception as e:
+            print(f"⚠️ Could not delete {file}: {e}")
+
+if deleted_count > 0:
+    print(f"🗑️ Successfully removed {deleted_count} old JSON file(s).")
+else:
+    print("✨ Directory is already clean.")
 
 def save_part(video_name, part_idx, frame_count, payload_bytes):
     b91_string = base91.encode(payload_bytes)
     final_output = f"{frame_count},{TARGET_WIDTH},{TARGET_HEIGHT}\n{b91_string}"
     
-    # Enforces hard cap check
     if len(final_output.encode('utf-8')) > 100 * 1024 * 1024:
         print(f"⚠️ Critical Warning: Part {part_idx} drifted over limits! Reducing threshold.")
         
@@ -52,18 +65,14 @@ def process_video(file_path):
             packed_mask = np.packbits(diff_mask)
             changed_colors = flat_frame[diff_mask].flatten()
             
-            # Calculate the frame structural size overhead cost
             frame_bytes = bytearray()
             color_bytes_length = len(changed_colors)
             frame_bytes.extend(color_bytes_length.to_bytes(2, byteorder='big'))
             frame_bytes.extend(packed_mask.tobytes())
             frame_bytes.extend(changed_colors.tobytes())
             
-            # Check if adding this frame pushes the raw text translation over our strict limit
-            # Base91 inflates by roughly 14%, so multiply raw size by 1.15 for safety margin
             estimated_added_text_size = len(frame_bytes) * 1.15
             if (len(current_part_payload) * 1.15) + estimated_added_text_size >= MAX_FILE_BYTES:
-                # Save out current accumulated block slice file
                 save_part(video_name, part_idx, part_frame_count, current_part_payload)
                 part_idx += 1
                 part_frame_count = 0
@@ -77,12 +86,12 @@ def process_video(file_path):
 
     cap.release()
 
-    # Save any final remaining trailing frame pieces
     if part_frame_count > 0:
         save_part(video_name, part_idx, part_frame_count, current_part_payload)
         
     print(f"🎉 Slicing Finished successfully. Total multi-part sequences generated: {part_idx}")
 
+# Run process for all MP4 files in the folder
 for file in os.listdir('.'):
     if file.endswith('.mp4'):
         process_video(file)
