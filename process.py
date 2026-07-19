@@ -17,7 +17,6 @@ def process_video(file_path):
     raw_frame_index = 0
     compressed_payload = bytearray()
     
-    # Initialize previous frame as absolute black array to optimize Frame 0
     prev_frame = [[0, 0, 0]] * (TARGET_WIDTH * TARGET_HEIGHT)
 
     while True:
@@ -30,18 +29,40 @@ def process_video(file_path):
             rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
             flat_frame = rgb_frame.reshape(-1, 3)
             
-            diff_bytes = bytearray()
+            # Find all pixel modifications for this frame
+            changed_pixels = []
             for idx, pixel in enumerate(flat_frame):
                 prev_pixel = prev_frame[idx]
-                # Lossless delta comparison
                 if pixel[0] != prev_pixel[0] or pixel[1] != prev_pixel[1] or pixel[2] != prev_pixel[2]:
-                    # Index position (2 bytes) + R, G, B colors (3 bytes)
-                    diff_bytes.extend(idx.to_bytes(2, byteorder='big'))
-                    diff_bytes.extend([pixel[0], pixel[1], pixel[2]])
+                    changed_pixels.append((idx, pixel))
             
-            # Optimization: Downsized count header allocation from 4 bytes to 2 bytes
-            num_updates = len(diff_bytes) // 5
-            compressed_payload.extend(num_updates.to_bytes(2, byteorder='big'))
+            # Compress the changes using coordinate runs
+            diff_bytes = bytearray()
+            i = 0
+            while i < len(changed_pixels):
+                start_idx, color = changed_pixels[i]
+                run_length = 1
+                
+                # Check how many consecutive pixels are also changing in a row
+                while (i + run_length < len(changed_pixels) and 
+                       changed_pixels[i + run_length][0] == start_idx + run_length and 
+                       run_length < 255):
+                    run_length += 1
+                
+                # Write: Start Index (2 bytes) + Run Length (1 byte)
+                diff_bytes.extend(start_idx.to_bytes(2, byteorder='big'))
+                diff_bytes.append(run_length)
+                
+                # Write the raw RGB colors for this run consecutive sequence
+                for k in range(run_length):
+                    run_color = changed_pixels[i + k][1]
+                    diff_bytes.extend([run_color[0], run_color[1], run_color[2]])
+                
+                i += run_length
+            
+            # Number of structural instruction blocks in this frame
+            num_blocks = len(diff_bytes) # We track the exact byte chunk length
+            compressed_payload.extend(num_blocks.to_bytes(2, byteorder='big'))
             compressed_payload.extend(diff_bytes)
 
             prev_frame = flat_frame
@@ -57,7 +78,7 @@ def process_video(file_path):
     with open(output_filename, "w") as f:
         f.write(final_output)
         
-    print(f"Generated {output_filename} ({frame_count} frames) -> Highly Compressed!")
+    print(f"🎉 Generated {output_filename} ({frame_count} frames) -> Lossless RLE Coordinates!")
 
 for file in os.listdir('.'):
     if file.endswith('.mp4'):
