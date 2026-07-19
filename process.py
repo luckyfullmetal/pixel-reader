@@ -1,6 +1,7 @@
 import os
 import struct
 import cv2
+import base64
 
 TARGET_WIDTH = 181
 TARGET_HEIGHT = 102
@@ -23,10 +24,9 @@ def process_video(file_path):
         
         # Downscale using Nearest Neighbor
         resized = cv2.resize(frame, (TARGET_WIDTH, TARGET_HEIGHT), interpolation=cv2.INTER_NEAREST)
-        # OpenCV reads in BGR; convert to RGB
+        # OpenCV reads BGR; convert to RGB
         rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         
-        # Append raw pixel bytes directly
         frames_bytes.extend(rgb_frame.tobytes())
         frame_count += 1
 
@@ -34,15 +34,18 @@ def process_video(file_path):
 
     # Binary Header: Frame Count (4 bytes), Width (2 bytes), Height (2 bytes)
     header = struct.pack("<IHH", frame_count, TARGET_WIDTH, TARGET_HEIGHT)
+    full_payload = header + frames_bytes
     
-    # Save optimized binary file
+    # Encode the raw binary into safe Base64 text
+    b64_payload = base64.b64encode(full_payload)
+    
+    # Save as a .bin file containing pure text
     output_filename = f"{video_name}.bin"
     with open(output_filename, "wb") as f:
-        f.write(header + frames_bytes)
+        f.write(b64_payload)
         
-    print(f"Generated {output_filename} ({frame_count} frames)")
+    print(f"Generated Roblox-compatible {output_filename} ({frame_count} frames)")
 
-# Process all MP4 files in the directory
 for file in os.listdir('.'):
     if file.endswith('.mp4'):
         process_video(file)
