@@ -2,7 +2,7 @@ name: Auto Convert Video to Lua Data
 on:
   push:
     paths:
-      - '*.mp4'
+      - '*.mp4' # Triggers when any mp4 is added or updated
 
 jobs:
   convert:
@@ -22,42 +22,51 @@ jobs:
       - name: Run Converter Script
         run: |
           python -c "
-          import cv2, os
+          import cv2, os, base64
+          
           video_files = [f for f in os.listdir('.') if f.endswith('.mp4')]
           if not video_files:
               print('No MP4 files found!')
-              exit(1)
-          
-          # We build a dictionary mapping video names to their raw strings
-          lua_entry = []
+              exit(0)
+              
           for video_file in video_files:
               name_clean = os.path.splitext(video_file)[0]
-              print(f'Processing file: {video_file}...')
+              print(f'Processing: {video_file}...')
+              
               cap = cv2.VideoCapture(video_file)
-              byte_data = bytearray()
+              raw_bytes = bytearray()
+              
               while cap.isOpened():
                   ret, frame = cap.read()
                   if not ret: break
-                  resized = cv2.resize(frame, (181, 102))
+                  
+                  # Enforce strict Nearest Neighbor downscaling
+                  resized = cv2.resize(frame, (181, 102), interpolation=cv2.INTER_NEAREST)
+                  
                   for y in range(102):
                       for x in range(181):
                           b, g, r = resized[y, x]
-                          byte_data.append(r)
-                          byte_data.append(g)
-                          byte_data.append(b)
+                          raw_bytes.append(r)
+                          raw_bytes.append(g)
+                          raw_bytes.append(b)
+                          
               cap.release()
-              lua_string = ''.join(f'\\\\x{b:02x}' for b in byte_data)
-              lua_entry.append(f'[\"{name_clean}\"] = \"{lua_string}\"')
-          
-          # Output structured data table dictionary
-          with open('VideoData.lua', 'w') as f:
-              f.write('return {\n' + ',\n'.join(lua_entry) + '\n}')
+              
+              # Turn raw stream into tight base64 text
+              b64_string = base64.b64encode(raw_bytes).decode('utf-8')
+              
+              # Save each video out into its own separate raw data file
+              output_filename = f'{name_clean}.txt'
+              with open(output_filename, 'w') as f:
+                  f.write(b64_string)
+              print(f'Created raw asset: {output_filename}')
           "
 
       - name: Commit and Push Lua Data
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add VideoData.lua
-          git commit -m "Automated video batch conversion to Luau data dictionary" || exit 0
+          # Add all newly generated video text assets
+          git add *.txt
+          git commit -m "Batch updated raw pixel data files" || exit 0
           git push
