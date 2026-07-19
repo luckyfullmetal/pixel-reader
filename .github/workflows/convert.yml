@@ -1,33 +1,45 @@
-name: Convert MP4 to Roblox Binary
+import os
+import struct
+import cv2
 
-on:
-  push:
-    paths:
-      - '*.mp4'
+# CHANGED: Lower resolution dramatically reduces the binary file size
+TARGET_WIDTH = 80
+TARGET_HEIGHT = 45
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v4
+def process_video(file_path):
+    video_name = os.path.splitext(file_path)[0]
+    cap = cv2.VideoCapture(file_path)
+    
+    if not cap.isOpened():
+        print(f"Failed to open {file_path}")
+        return
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
+    frames_bytes = bytearray()
+    frame_count = 0
 
-      - name: Install Dependencies
-        run: pip install opencv-python-headless
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        # Downscale using Nearest Neighbor
+        resized = cv2.resize(frame, (TARGET_WIDTH, TARGET_HEIGHT), interpolation=cv2.INTER_NEAREST)
+        rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        
+        frames_bytes.extend(rgb_frame.tobytes())
+        frame_count += 1
 
-      - name: Run Converter
-        run: python process.py
+    cap.release()
 
-      - name: Commit Binary Files
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add *.bin
-          git diff-index --quiet HEAD || git commit -m "Automated video binary conversion"
-          git push
+    # Binary Header: Frame Count (4 bytes), Width (2 bytes), Height (2 bytes)
+    header = struct.pack("<IHH", frame_count, TARGET_WIDTH, TARGET_HEIGHT)
+    
+    output_filename = f"{video_name}.bin"
+    with open(output_filename, "wb") as f:
+        f.write(header + frames_bytes)
+        
+    print(f"Generated {output_filename} ({frame_count} frames)")
+
+for file in os.listdir('.'):
+    if file.endswith('.mp4'):
+        process_video(file)
