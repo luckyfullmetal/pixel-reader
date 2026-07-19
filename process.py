@@ -29,7 +29,6 @@ def process_video(file_path):
             rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
             flat_frame = rgb_frame.reshape(-1, 3)
             
-            # Find all pixel updates for this frame
             changed_pixels = []
             for idx, pixel in enumerate(flat_frame):
                 prev_pixel = prev_frame[idx]
@@ -42,8 +41,13 @@ def process_video(file_path):
                 start_idx, color = changed_pixels[i]
                 run_length = 1
                 
+                # Check what row this run started on
+                start_row = start_idx // TARGET_WIDTH
+                
+                # FIXED: Added boundary constraint to prevent runs from wrapping across screen edges
                 while (i + run_length < len(changed_pixels) and 
                        changed_pixels[i + run_length][0] == start_idx + run_length and 
+                       (start_idx + run_length) // TARGET_WIDTH == start_row and
                        run_length < 255):
                     run_length += 1
                 
@@ -56,7 +60,6 @@ def process_video(file_path):
                 
                 i += run_length
             
-            # FIXED: Explicitly store the total length of diff_bytes in 2 bytes
             frame_size = len(diff_bytes)
             compressed_payload.extend(frame_size.to_bytes(2, byteorder='big'))
             compressed_payload.extend(diff_bytes)
