@@ -18,7 +18,7 @@ jobs:
           python-version: '3.x'
 
       - name: Install Dependencies
-        run: pip install opencv-python-headless
+        run: pip install opencv-python-headless base91
 
       - name: Run Converter
         run: python process.py
