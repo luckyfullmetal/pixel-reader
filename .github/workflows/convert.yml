@@ -1,0 +1,55 @@
+name: Auto Convert Video to Lua Data
+on:
+  push:
+    paths:
+      - '*.mp4'
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install OpenCV
+        run: pip install opencv-python-headless
+
+      - name: Run Converter Script
+        run: |
+          python -c "
+          import cv2, os
+          video_files = [f for f in os.listdir('.') if f.endswith('.mp4')]
+          if not video_files:
+              print('No MP4 file found!')
+              exit(0)
+          video_file = video_files[0]
+          cap = cv2.VideoCapture(video_file)
+          byte_data = bytearray()
+          while cap.isOpened():
+              ret, frame = cap.read()
+              if not ret: break
+              resized = cv2.resize(frame, (181, 102))
+              for y in range(102):
+                  for x in range(181):
+                      b, g, r = resized[y, x]
+                      byte_data.append(r)
+                      byte_data.append(g)
+                      byte_data.append(b)
+          cap.release()
+          lua_string = ''.join(f'\\\\x{b:02x}' for b in byte_data)
+          with open('VideoData.lua', 'w') as f:
+              f.write('return \"' + lua_string + '\"')
+          "
+
+      - name: Commit and Push Lua Data
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add VideoData.lua
+          git commit -m "Automated video conversion to Luau data string" || exit 0
+          git push
