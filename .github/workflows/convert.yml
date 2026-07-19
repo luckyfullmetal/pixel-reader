@@ -25,25 +25,33 @@ jobs:
           import cv2, os
           video_files = [f for f in os.listdir('.') if f.endswith('.mp4')]
           if not video_files:
-              print('No MP4 file found!')
-              exit(0)
-          video_file = video_files[0]
-          cap = cv2.VideoCapture(video_file)
-          byte_data = bytearray()
-          while cap.isOpened():
-              ret, frame = cap.read()
-              if not ret: break
-              resized = cv2.resize(frame, (181, 102))
-              for y in range(102):
-                  for x in range(181):
-                      b, g, r = resized[y, x]
-                      byte_data.append(r)
-                      byte_data.append(g)
-                      byte_data.append(b)
-          cap.release()
-          lua_string = ''.join(f'\\\\x{b:02x}' for b in byte_data)
+              print('No MP4 files found!')
+              exit(1)
+          
+          # We build a dictionary mapping video names to their raw strings
+          lua_entry = []
+          for video_file in video_files:
+              name_clean = os.path.splitext(video_file)[0]
+              print(f'Processing file: {video_file}...')
+              cap = cv2.VideoCapture(video_file)
+              byte_data = bytearray()
+              while cap.isOpened():
+                  ret, frame = cap.read()
+                  if not ret: break
+                  resized = cv2.resize(frame, (181, 102))
+                  for y in range(102):
+                      for x in range(181):
+                          b, g, r = resized[y, x]
+                          byte_data.append(r)
+                          byte_data.append(g)
+                          byte_data.append(b)
+              cap.release()
+              lua_string = ''.join(f'\\\\x{b:02x}' for b in byte_data)
+              lua_entry.append(f'[\"{name_clean}\"] = \"{lua_string}\"')
+          
+          # Output structured data table dictionary
           with open('VideoData.lua', 'w') as f:
-              f.write('return \"' + lua_string + '\"')
+              f.write('return {\n' + ',\n'.join(lua_entry) + '\n}')
           "
 
       - name: Commit and Push Lua Data
@@ -51,5 +59,5 @@ jobs:
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add VideoData.lua
-          git commit -m "Automated video conversion to Luau data string" || exit 0
+          git commit -m "Automated video batch conversion to Luau data dictionary" || exit 0
           git push
