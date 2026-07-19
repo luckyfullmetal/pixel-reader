@@ -1,6 +1,8 @@
 import os
+import struct
 import cv2
 
+# Set your higher density/resolution here!
 TARGET_WIDTH = 384
 TARGET_HEIGHT = 216
 
@@ -14,36 +16,35 @@ def process_video(file_path):
 
     frame_count = 0
     raw_frame_index = 0
-    hex_payloads = []
+    raw_binary_data = bytearray()
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
         
-        # Keep 15 FPS to optimize file weight
+        # Keep 15 FPS to stay within performance limits
         if raw_frame_index % 2 == 0:
             resized = cv2.resize(frame, (TARGET_WIDTH, TARGET_HEIGHT), interpolation=cv2.INTER_NEAREST)
             rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
             
-            # Pack every pixel into 6 hex characters (e.g. "ff0000" for Red)
-            for pixel in rgb_frame.reshape(-1, 3):
-                hex_payloads.append(f"{pixel[0]:02x}{pixel[1]:02x}{pixel[2]:02x}")
-                
+            # Append raw bytes directly to our binary array
+            raw_binary_data.extend(rgb_frame.flatten().tobytes())
             frame_count += 1
             
         raw_frame_index += 1
 
     cap.release()
 
-    # Create a small comma-separated header line followed by the giant hex block
-    final_output = f"{frame_count},{TARGET_WIDTH},{TARGET_HEIGHT}\n" + "".join(hex_payloads)
+    # Create an 8-byte binary header:
+    # 4 bytes for total frames (uint32), 2 bytes for width (uint16), 2 bytes for height (uint16)
+    header = struct.pack("<IHH", frame_count, TARGET_WIDTH, TARGET_HEIGHT)
     
-    output_filename = f"{video_name}.json"
-    with open(output_filename, "w") as f:
-        f.write(final_output)
+    output_filename = f"{video_name}.bin"
+    with open(output_filename, "wb") as f:
+        f.write(header + raw_binary_data)
         
-    print(f"Generated {output_filename} ({frame_count} frames) - Optimized text string!")
+    print(f"Generated binary {output_filename} ({frame_count} frames) - 50% smaller!")
 
 for file in os.listdir('.'):
     if file.endswith('.mp4'):
