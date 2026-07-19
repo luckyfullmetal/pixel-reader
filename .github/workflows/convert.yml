@@ -2,7 +2,7 @@ name: Auto Convert Video to Lua Data
 on:
   push:
     paths:
-      - '*.mp4' # Triggers when any mp4 is added or updated
+      - '*.mp4'
 
 jobs:
   convert:
@@ -16,13 +16,14 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install OpenCV
-        run: pip install opencv-python-headless
+      - name: Install Dependencies
+        run: pip install opencv-python-headless numpy
 
       - name: Run Converter Script
         run: |
           python -c "
           import cv2, os, base64
+          import numpy as np
           
           video_files = [f for f in os.listdir('.') if f.endswith('.mp4')]
           if not video_files:
@@ -31,42 +32,82 @@ jobs:
               
           for video_file in video_files:
               name_clean = os.path.splitext(video_file)[0]
-              print(f'Processing: {video_file}...')
+              print(f'Compressing: {video_file}...')
               
               cap = cv2.VideoCapture(video_file)
-              raw_bytes = bytearray()
+              frames = []
               
               while cap.isOpened():
                   ret, frame = cap.read()
                   if not ret: break
-                  
-                  # Enforce strict Nearest Neighbor downscaling
                   resized = cv2.resize(frame, (181, 102), interpolation=cv2.INTER_NEAREST)
-                  
-                  for y in range(102):
-                      for x in range(181):
-                          b, g, r = resized[y, x]
-                          raw_bytes.append(r)
-                          raw_bytes.append(g)
-                          raw_bytes.append(b)
-                          
+                  # Convert BGR to RGB
+                  resized = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+                  frames.append(resized)
               cap.release()
               
-              # Turn raw stream into tight base64 text
-              b64_string = base64.b64encode(raw_bytes).decode('utf-8')
+              if not frames: continue
               
-              # Save each video out into its own separate raw data file
+              # 1. Generate Global 256 Color Palette
+              all_pixels = np.vstack([f.reshape(-1, 3) for f in frames])
+              unique_colors, counts = np.unique(all_pixels, axis=0, return_counts=True)
+              
+              # Take up to 256 most frequent colors
+              top_indices = np.argsort(-counts)[:256]
+              palette = unique_colors[top_indices]
+              
+              # Pad palette to exactly 256 entries if video has fewer colors
+              if len(palette) < 256:
+                  padding = np.zeros((256 - len(palette), 3), dtype=np.uint8)
+                  palette = np.vstack([palette, padding])
+                  
+              # 2. Compile Delta Compression Stream
+              compressed_bytes = bytearray()
+              
+              # Write palette colors header (256 * 3 = 768 bytes)
+              for color in palette:
+                  compressed_bytes.extend(color)
+                  
+              # Write total frames count (4 bytes)
+              total_frames = len(frames)
+              compressed_bytes.extend(total_frames.to_bytes(4, byteorder='big'))
+              
+              last_frame_indices = np.full((102, 181), -1, dtype=np.int32)
+              
+              for frame in frames:
+                  # Map current frame colors to closest palette index
+                  distances = np.linalg.norm(frame[:, :, None, :] - palette[None, None, :, :], axis=3)
+                  current_indices = np.argmin(distances, axis=2).astype(np.uint8)
+                  
+                  # Find which pixels changed compared to the prior frame
+                  changed_mask = current_indices != last_frame_indices
+                  changed_y, changed_x = np.where(changed_mask)
+                  
+                  # Write total change count for this frame (2 bytes)
+                  change_count = len(changed_y)
+                  compressed_bytes.extend(change_count.to_bytes(2, byteorder='big'))
+                  
+                  # Write address index data pairs: [X coordinate, Y coordinate, Palette Color ID]
+                  for y, x in zip(changed_y, changed_x):
+                      compressed_bytes.append(x)
+                      compressed_bytes.append(y)
+                      compressed_bytes.append(current_indices[y, x])
+                      
+                  last_frame_indices = current_indices.copy()
+                  
+              # Turn raw compressed stream into tiny base64 text file
+              b64_string = base64.b64encode(compressed_bytes).decode('utf-8')
+              
               output_filename = f'{name_clean}.txt'
               with open(output_filename, 'w') as f:
                   f.write(b64_string)
-              print(f'Created raw asset: {output_filename}')
+              print(f'Successfully compressed asset: {output_filename} ({len(b64_string)/1024:.2f} KB)')
           "
 
       - name: Commit and Push Lua Data
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          # Add all newly generated video text assets
           git add *.txt
-          git commit -m "Batch updated raw pixel data files" || exit 0
+          git commit -m "Apply delta compression & palette optimization to video data assets" || exit 0
           git push
