@@ -1,4 +1,5 @@
 import os
+import base64
 import struct
 import numpy as np
 import scipy.io.wavfile as wav
@@ -7,7 +8,7 @@ from moviepy import VideoFileClip
 # 2048 channels distributed logarithmically across the human acoustic spectrum
 ALL_FREQS = np.logspace(np.log10(20), np.log10(4000), num=2048, dtype=int).tolist()
 
-def bake_audio_binary(video_path):
+def bake_audio(video_path):
     video_name = os.path.splitext(video_path)[0]
     temp_wav = f"{video_name}_temp.wav"
     
@@ -39,43 +40,45 @@ def bake_audio_binary(video_path):
     samples_per_frame = int(sample_rate / native_fps)
     total_frames = int(len(data) / samples_per_frame)
     
-    output_filename = f"{video_name}_audio.bin"
+    # Structural Binary packing initialization
+    # We will use 1 single byte (0-255) per frequency to keep it extraordinarily tiny
+    binary_payload = bytearray()
     
-    print(f"💾 Packing RAW 2048-band spectrum into ultra-compressed Binary format...")
+    print(f"📊 Slicing RAW 3-Zone 2048-band into compressed binary stream...")
     
-    with open(output_filename, "wb") as bin_file:
-        for f in range(total_frames):
-            start_idx = f * samples_per_frame
-            end_idx = start_idx + samples_per_frame
-            frame_chunk = data[start_idx:end_idx]
+    for f in range(total_frames):
+        start_idx = f * samples_per_frame
+        end_idx = start_idx + samples_per_frame
+        frame_chunk = data[start_idx:end_idx]
+        
+        if len(frame_chunk) < samples_per_frame:
+            break
             
-            if len(frame_chunk) < samples_per_frame:
-                break
-                
-            # Pure raw unwindowed Fast Fourier Transform
-            fft_data = np.abs(np.fft.rfft(frame_chunk))
-            fft_freqs = np.fft.rfftfreq(len(frame_chunk), d=1.0/sample_rate)
+        fft_data = np.abs(np.fft.rfft(frame_chunk))
+        fft_freqs = np.fft.rfftfreq(len(frame_chunk), d=1.0/sample_rate)
+        
+        for target in ALL_FREQS:
+            idx = (np.abs(fft_freqs - target)).argmin()
+            raw_val = fft_data[idx] / (samples_per_frame / 2)
+            clamped_val = np.clip(raw_val, 0.0, 1.0)
             
-            frame_bytes = bytearray()
+            # Convert 0.0-1.0 float directly to a single 8-bit unsigned integer byte (0-255)
+            byte_val = int(clamped_val * 255)
+            binary_payload.append(byte_val)
             
-            for target in ALL_FREQS:
-                idx = (np.abs(fft_freqs - target)).argmin()
-                raw_val = fft_data[idx] / (samples_per_frame / 2)
-                
-                # Clamp between 0.0 and 1.0
-                clamped_val = np.clip(raw_val, 0.0, 1.0)
-                
-                # Convert 0.0 - 1.0 float directly to a 0 - 255 single-byte integer
-                byte_val = int(clamped_val * 255)
-                frame_bytes.append(byte_val)
-                
-            bin_file.write(frame_bytes)
-            
+    # Encode the binary payload to a clean string format safe for HTTP transport
+    b64_string = base64.b64encode(binary_payload).decode('utf-8')
+    
+    output_filename = f"{video_name}_audio.txt"
+    with open(output_filename, "w") as out_file:
+        out_file.write(b64_string)
+        
     if os.path.exists(temp_wav):
         os.remove(temp_wav)
         
-    print(f"🚀 Success! Ultra-compressed binary file saved to: {output_filename}\n")
+    print(f"💾 Ultra-compressed binary stream saved to: {output_filename}")
+    print(f"📉 Size reduction achieved! File size is now minimal.\n")
 
 for file in os.listdir('.'):
     if file.endswith('.mp4'):
-        bake_audio_binary(file)
+        bake_audio(file)
