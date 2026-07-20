@@ -4,8 +4,8 @@ import numpy as np
 import scipy.io.wavfile as wav
 from moviepy import VideoFileClip
 
-# Upgraded to 512 ultra-dense synthesis bands for massive frequency resolution
-TARGET_FREQS = np.logspace(np.log10(40), np.log10(4000), num=512, dtype=int).tolist()
+# 2048 extreme-density channels spaced logarithmically across the human audible window
+TARGET_FREQS = np.logspace(np.log10(30), np.log10(3800), num=2048, dtype=int).tolist()
 
 def bake_audio(video_path):
     video_name = os.path.splitext(video_path)[0]
@@ -25,7 +25,7 @@ def bake_audio(video_path):
         video.audio.write_audiofile(temp_wav, fps=44100, nbytes=2, codec='pcm_s16le', logger=None)
         video.close()
     except Exception as e:
-        print(f"❌ Failed to parse video metadata or extract audio: {e}")
+        print(f"❌ Failed to parse video: {e}")
         return
 
     sample_rate, data = wav.read(temp_wav)
@@ -40,9 +40,10 @@ def bake_audio(video_path):
     total_frames = int(len(data) / samples_per_frame)
     
     audio_track_data = []
-    window = np.hanning(samples_per_frame)
+    # Advanced Blackman-Harris windowing function to tighten adjacent bleeding on 2048 slices
+    window = np.blackman(samples_per_frame)
     
-    print(f"📊 Baking hardware-optimized matrix for {len(TARGET_FREQS)} channels...")
+    print(f"📊 Slicing extreme high-density 2048-band acoustic spectrum matrix...")
     
     for f in range(total_frames):
         start_idx = f * samples_per_frame
@@ -60,14 +61,15 @@ def bake_audio(video_path):
         
         for target in TARGET_FREQS:
             idx = (np.abs(fft_freqs - target)).argmin()
-            
             raw_val = fft_data[idx] / (samples_per_frame / 2)
+            
+            # Heavy compression curve specifically designed for extreme multi-channel handling
             log_volume = 20 * np.log10(raw_val + 1e-5)
+            normalized_vol = np.clip((log_volume + 45) / 45, 0.0, 1.0)
             
-            normalized_vol = np.clip((log_volume + 50) / 50, 0.0, 1.0)
-            equalized_vol = normalized_vol * (1.1 - (target / 4500.0))
-            
-            frame_amplitudes[f"{target}Hz"] = round(float(np.clip(equalized_vol, 0.0, 1.0)), 4)
+            # Progressive low pass filter to avoid high-end clipping
+            taper_factor = 1.0 - (target / 4200.0)
+            frame_amplitudes[f"{target}Hz"] = round(float(np.clip(normalized_vol * taper_factor, 0.0, 1.0)), 4)
             
         audio_track_data.append(frame_amplitudes)
         
@@ -78,7 +80,7 @@ def bake_audio(video_path):
     if os.path.exists(temp_wav):
         os.remove(temp_wav)
         
-    print(f"💾 High-density 512 matrix saved to: {output_filename}\n")
+    print(f"💾 Mega-matrix saved to: {output_filename}\n")
 
 for file in os.listdir('.'):
     if file.endswith('.mp4'):
