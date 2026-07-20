@@ -2,7 +2,7 @@ import os
 import json
 import numpy as np
 import scipy.io.wavfile as wav
-from moviepy.editor import VideoFileClip
+from moviepy import VideoFileClip
 
 # The 7 target frequencies we are monitoring
 TARGET_FREQS = [60, 100, 500, 1000, 3000, 6000, 10000]
