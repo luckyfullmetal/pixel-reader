@@ -4,9 +4,8 @@ import numpy as np
 import scipy.io.wavfile as wav
 from moviepy import VideoFileClip
 
-# Generate 64 logarithmically scaled frequencies (20Hz to 12000Hz)
-# Log-scaling matches the natural way human ears perceive pitch spacing!
-TARGET_FREQS = np.logspace(np.log10(20), np.log10(12000), num=64, dtype=int).tolist()
+# Generate 256 logarithmically scaled frequencies spanning from deep bass to crisp treble
+TARGET_FREQS = np.logspace(np.log10(20), np.log10(14000), num=256, dtype=int).tolist()
 
 def bake_audio(video_path):
     video_name = os.path.splitext(video_path)[0]
@@ -71,7 +70,7 @@ def bake_audio(video_path):
     if os.path.exists(temp_wav):
         os.remove(temp_wav)
         
-    print(f"💾 Baked 64-band tracking data matrix! Saved to: {output_filename}\n")
+    print(f"💾 Baked 256-band tracking data matrix! Saved to: {output_filename}\n")
 
 for file in os.listdir('.'):
     if file.endswith('.mp4'):
